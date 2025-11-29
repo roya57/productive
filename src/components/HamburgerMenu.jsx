@@ -8,12 +8,7 @@ import {
   Divider,
   Avatar,
 } from "@mui/material";
-import {
-  Menu as MenuIcon,
-  Login,
-  Home,
-  Logout,
-} from "@mui/icons-material";
+import { Menu as MenuIcon, Login, Home, Logout } from "@mui/icons-material";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 
@@ -135,7 +130,9 @@ function HamburgerMenu() {
 
         {/* Divider before auth options */}
         {((user && location.pathname !== "/") ||
-          (!user && location.pathname !== "/" && location.pathname !== "/signin")) && <Divider />}
+          (!user &&
+            location.pathname !== "/" &&
+            location.pathname !== "/signin")) && <Divider />}
 
         {/* Authentication Options */}
         {user ? (
@@ -163,4 +160,3 @@ function HamburgerMenu() {
 }
 
 export default HamburgerMenu;
-

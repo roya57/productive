@@ -18,6 +18,7 @@ import {
   Radio,
 } from "@mui/material";
 import HamburgerMenu from "../components/HamburgerMenu";
+import { createHabit } from "../lib/supabase";
 
 function CreateHabit() {
   const { user } = useAuth();
@@ -42,21 +43,38 @@ function CreateHabit() {
       return;
     }
 
-    // For now, just log the data (we'll implement actual creation later)
-    console.log("Creating habit:", { habitName, frequency, user });
-
-    // TODO: Implement habit creation logic here
     setLoading(true);
+    setError(null);
+
     try {
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      
-      // For now, just show success and navigate back
-      // Later we'll navigate to a habit tracking page
-      navigate("/");
+      // Prepare habit data
+      const habitData = {
+        name: habitName.trim(),
+        frequency: frequency,
+      };
+
+      // Get user ID if authenticated
+      const userId = user ? user.id : null;
+
+      // Create habit in database
+      const newHabit = await createHabit(habitData, userId);
+
+      console.log("✅ Habit created successfully:", newHabit);
+
+      // Navigate to habit tracking page with habit info
+      navigate("/habit/tracker", {
+        state: {
+          habitName: habitName.trim(),
+          habitId: newHabit.habit_id,
+          frequency: frequency,
+          createdAt: newHabit.created_at, // Pass creation date
+        },
+      });
     } catch (err) {
       console.error("Error creating habit:", err);
-      setError("Failed to create habit. Please try again.");
+      setError(
+        err.message || "Failed to create habit. Please try again."
+      );
     } finally {
       setLoading(false);
     }
@@ -230,4 +248,3 @@ function CreateHabit() {
 }
 
 export default CreateHabit;
-

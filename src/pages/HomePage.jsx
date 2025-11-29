@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Box,
@@ -8,15 +9,160 @@ import {
   CardContent,
   useMediaQuery,
   useTheme,
+  List,
+  ListItem,
+  ListItemText,
+  ListItemButton,
+  CircularProgress,
+  Alert,
 } from "@mui/material";
 import HamburgerMenu from "../components/HamburgerMenu";
 import { useAuth } from "../contexts/AuthContext";
+import { getUserHabits } from "../lib/supabase";
 
 function HomePage() {
   const navigate = useNavigate();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
   const { user } = useAuth();
+  const [habits, setHabits] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const loadHabits = async () => {
+      if (user?.id) {
+        try {
+          setLoading(true);
+          setError(null);
+          const userHabits = await getUserHabits(user.id);
+          setHabits(userHabits);
+        } catch (err) {
+          console.error("Error loading habits:", err);
+          setError("Failed to load your habits. Please try again.");
+        } finally {
+          setLoading(false);
+        }
+      } else {
+        setHabits([]);
+      }
+    };
+
+    loadHabits();
+  }, [user?.id]);
+
+  const handleHabitClick = (habit) => {
+    navigate("/habit/tracker", {
+      state: {
+        habitName: habit.habit_data?.name || "My Habit",
+        habitId: habit.habit_id,
+        frequency: habit.habit_data?.frequency || "daily",
+        createdAt: habit.created_at,
+      },
+    });
+  };
+
+  const formatDate = (dateString) => {
+    if (!dateString) return "";
+    const date = new Date(dateString);
+    return date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  };
+
+  // Calculate streak for a habit
+  const calculateStreak = (habit) => {
+    const checkedDays = habit.habit_data?.checkedDays || [];
+    if (checkedDays.length === 0) return 0;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    let streak = 0;
+    for (let i = 0; i < 365; i++) {
+      const checkDate = new Date(today);
+      checkDate.setDate(today.getDate() - i);
+      checkDate.setHours(0, 0, 0, 0);
+
+      const creationDate = new Date(habit.created_at);
+      creationDate.setHours(0, 0, 0, 0);
+
+      // Stop if we've gone before the creation date
+      if (checkDate < creationDate) {
+        break;
+      }
+
+      const dateKey = checkDate.toISOString().split("T")[0];
+      if (checkedDays.includes(dateKey)) {
+        streak++;
+      } else {
+        break;
+      }
+    }
+    return streak;
+  };
+
+  // Calculate completion rate for a habit
+  const calculateCompletionRate = (habit) => {
+    const checkedDays = habit.habit_data?.checkedDays || [];
+    const creationDate = new Date(habit.created_at);
+    creationDate.setHours(0, 0, 0, 0);
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const daysSinceCreation = Math.ceil(
+      (today - creationDate) / (1000 * 60 * 60 * 24)
+    ) + 1; // +1 to include creation day
+
+    if (daysSinceCreation <= 0) return 0;
+
+    const completionRate = Math.round((checkedDays.length / daysSinceCreation) * 100);
+    return Math.min(completionRate, 100); // Cap at 100%
+  };
+
+  // CircularProgress with label component
+  const CircularProgressWithLabel = ({ value, size = 60 }) => {
+    return (
+      <Box sx={{ position: "relative", display: "inline-flex" }}>
+        <CircularProgress
+          variant="determinate"
+          value={value}
+          size={size}
+          thickness={4}
+          sx={{
+            color: "#667eea",
+            "& .MuiCircularProgress-circle": {
+              strokeLinecap: "round",
+            },
+          }}
+        />
+        <Box
+          sx={{
+            top: 0,
+            left: 0,
+            bottom: 0,
+            right: 0,
+            position: "absolute",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Typography
+            variant="caption"
+            component="div"
+            sx={{ fontWeight: 600, fontSize: "0.75rem" }}
+            className="app-text-primary"
+          >
+            {`${value}%`}
+          </Typography>
+        </Box>
+      </Box>
+    );
+  };
 
   return (
     <Box className="page-container">
@@ -75,6 +221,159 @@ function HomePage() {
               >
                 Create Habit
               </Button>
+
+              {/* User Habits - show when authenticated */}
+              {user && (
+                <Box sx={{ mt: 4 }}>
+                  <Typography
+                    variant="h6"
+                    className="app-text-primary"
+                    sx={{ mb: 2, textAlign: "center", fontWeight: 600 }}
+                  >
+                    My Habits
+                  </Typography>
+
+                  {loading && (
+                    <Box
+                      sx={{
+                        display: "flex",
+                        justifyContent: "center",
+                        p: 3,
+                      }}
+                    >
+                      <CircularProgress />
+                    </Box>
+                  )}
+
+                  {error && (
+                    <Alert severity="error" sx={{ mb: 2 }}>
+                      {error}
+                    </Alert>
+                  )}
+
+                  {!loading && !error && habits.length === 0 && (
+                    <Box sx={{ p: 3, textAlign: "center" }}>
+                      <Typography variant="body2" color="text.secondary">
+                        You haven't created any habits yet. Create your first
+                        habit to get started!
+                      </Typography>
+                    </Box>
+                  )}
+
+                  {!loading && !error && habits.length > 0 && (
+                    <List sx={{ maxWidth: "500px", mx: "auto" }}>
+                      {habits.map((habit) => {
+                        const streak = calculateStreak(habit);
+                        const completionRate = calculateCompletionRate(habit);
+
+                        return (
+                          <ListItem key={habit.habit_id} disablePadding>
+                            <ListItemButton
+                              onClick={() => handleHabitClick(habit)}
+                              sx={{
+                                borderRadius: 2,
+                                mb: 1,
+                                border: "1px solid #e2e8f0",
+                                "&:hover": {
+                                  backgroundColor: "rgba(102, 126, 234, 0.08)",
+                                  borderColor: "#667eea",
+                                },
+                              }}
+                            >
+                              {/* Stats Section */}
+                              <Box
+                                sx={{
+                                  display: "flex",
+                                  gap: 2,
+                                  mr: 2,
+                                  alignItems: "center",
+                                }}
+                              >
+                                {/* Streak */}
+                                <Box
+                                  sx={{
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    alignItems: "center",
+                                    minWidth: 50,
+                                  }}
+                                >
+                                  <Typography
+                                    variant="caption"
+                                    color="text.secondary"
+                                    sx={{ mb: 0.5, fontSize: "0.7rem" }}
+                                  >
+                                    Streak
+                                  </Typography>
+                                  <Typography
+                                    variant="h6"
+                                    className="app-text-primary"
+                                    fontWeight={700}
+                                  >
+                                    {streak}
+                                  </Typography>
+                                </Box>
+
+                                {/* Completion Circle */}
+                                <Box
+                                  sx={{
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    alignItems: "center",
+                                    minWidth: 70,
+                                  }}
+                                >
+                                  <Typography
+                                    variant="caption"
+                                    color="text.secondary"
+                                    sx={{ mb: 0.5, fontSize: "0.7rem" }}
+                                  >
+                                    Completion
+                                  </Typography>
+                                  <CircularProgressWithLabel
+                                    value={completionRate}
+                                    size={50}
+                                  />
+                                </Box>
+                              </Box>
+
+                              {/* Habit Info */}
+                              <ListItemText
+                                primary={
+                                  <Typography
+                                    variant="subtitle1"
+                                    fontWeight="medium"
+                                    className="app-text-primary"
+                                  >
+                                    {habit.habit_data?.name || "Untitled Habit"}
+                                  </Typography>
+                                }
+                                secondary={
+                                  <Box>
+                                    <Typography
+                                      variant="body2"
+                                      color="text.secondary"
+                                    >
+                                      Frequency: {habit.habit_data?.frequency || "daily"}
+                                    </Typography>
+                                    <Typography
+                                      variant="caption"
+                                      color="text.secondary"
+                                      sx={{ display: "block", mt: 0.5 }}
+                                    >
+                                      Created: {formatDate(habit.created_at)}
+                                    </Typography>
+                                  </Box>
+                                }
+                              />
+                            </ListItemButton>
+                          </ListItem>
+                        );
+                      })}
+                    </List>
+                  )}
+                </Box>
+              )}
 
               {/* Instructions for non-authenticated users */}
               {!user && (
@@ -198,4 +497,3 @@ function HomePage() {
 }
 
 export default HomePage;
-
