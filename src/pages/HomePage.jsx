@@ -15,10 +15,11 @@ import {
   ListItemButton,
   CircularProgress,
   Alert,
+  Checkbox,
 } from "@mui/material";
 import HamburgerMenu from "../components/HamburgerMenu";
 import { useAuth } from "../contexts/AuthContext";
-import { getUserHabits } from "../lib/supabase";
+import { getUserHabits, updateHabitCheckedDays } from "../lib/supabase";
 
 function HomePage() {
   const navigate = useNavigate();
@@ -60,6 +61,56 @@ function HomePage() {
         createdAt: habit.created_at,
       },
     });
+  };
+
+  // Check if today is checked for a habit
+  const isTodayChecked = (habit) => {
+    const checkedDays = habit.habit_data?.checkedDays || [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayKey = today.toISOString().split("T")[0];
+    return checkedDays.includes(todayKey);
+  };
+
+  // Handle today checkbox toggle
+  const handleTodayToggle = async (habit, event) => {
+    event.stopPropagation(); // Prevent navigation when clicking checkbox
+
+    const checkedDays = new Set(habit.habit_data?.checkedDays || []);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayKey = today.toISOString().split("T")[0];
+
+    // Toggle today's date
+    if (checkedDays.has(todayKey)) {
+      checkedDays.delete(todayKey);
+    } else {
+      checkedDays.add(todayKey);
+    }
+
+    // Update local state immediately for responsive UI
+    const updatedHabits = habits.map((h) => {
+      if (h.habit_id === habit.habit_id) {
+        return {
+          ...h,
+          habit_data: {
+            ...h.habit_data,
+            checkedDays: Array.from(checkedDays),
+          },
+        };
+      }
+      return h;
+    });
+    setHabits(updatedHabits);
+
+    // Save to database
+    try {
+      await updateHabitCheckedDays(habit.habit_id, checkedDays);
+    } catch (err) {
+      console.error("Error updating today's check:", err);
+      // Revert on error
+      setHabits(habits);
+    }
   };
 
   const formatDate = (dateString) => {
@@ -366,6 +417,38 @@ function HomePage() {
                                   </Box>
                                 }
                               />
+
+                              {/* Today Checkbox */}
+                              <Box
+                                sx={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 1,
+                                  ml: 2,
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <Typography
+                                  variant="body2"
+                                  color="text.secondary"
+                                  sx={{ fontSize: "0.875rem" }}
+                                >
+                                  Today
+                                </Typography>
+                                <Checkbox
+                                  checked={isTodayChecked(habit)}
+                                  onChange={(e) => handleTodayToggle(habit, e)}
+                                  sx={{
+                                    color: "#667eea",
+                                    "&.Mui-checked": {
+                                      color: "#667eea",
+                                    },
+                                    "&:hover": {
+                                      backgroundColor: "rgba(102, 126, 234, 0.08)",
+                                    },
+                                  }}
+                                />
+                              </Box>
                             </ListItemButton>
                           </ListItem>
                         );
