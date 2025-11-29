@@ -1,0 +1,131 @@
+/* Shared Styles for All Pages */
+
+/* ===== LAYOUT CONTAINERS ===== */
+.page-container {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 2rem 0;
+  overflow-x: hidden;
+}
+
+.page-container-center {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 0;
+  overflow-x: hidden;
+}
+
+/* ===== CARDS ===== */
+.app-card {
+  border-radius: 16px !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1) !important;
+}
+
+.app-card-content {
+  padding: 2rem !important;
+}
+
+.app-card-content-large {
+  padding: 3rem !important;
+}
+
+/* Compact header padding when collapsed on mobile */
+.header-collapsed {
+  padding: 0.75rem !important;
+}
+
+/* ===== TYPOGRAPHY ===== */
+.app-title {
+  font-weight: 700 !important;
+  color: #667eea !important;
+  margin-bottom: 1rem !important;
+}
+
+.app-subtitle {
+  margin-bottom: 2rem !important;
+}
+
+.app-footer-text {
+  margin-top: 1.5rem !important;
+}
+
+/* ===== FORMS ===== */
+.app-form {
+  width: 100%;
+}
+
+.app-input {
+  margin-bottom: 2rem !important;
+}
+
+/* ===== BUTTONS ===== */
+.app-button-primary {
+  padding: 1rem 0 !important;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+  border-radius: 12px !important;
+  text-transform: none !important;
+  font-weight: 600 !important;
+}
+
+.app-button-primary:hover {
+  background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%) !important;
+}
+
+.app-button-primary:disabled {
+  background: #ccc !important;
+}
+
+.app-button-secondary {
+  border-radius: 12px !important;
+  text-transform: none !important;
+  font-weight: 600 !important;
+  padding: 0.75rem 1.5rem !important;
+}
+
+/* ===== LOADING & FEEDBACK ===== */
+.app-loading-spinner {
+  margin-right: 0.5rem !important;
+  color: white !important;
+}
+
+.app-error {
+  margin-bottom: 1.5rem !important;
+}
+
+.app-success {
+  margin-bottom: 1.5rem !important;
+}
+
+/* ===== TEXT UTILITIES ===== */
+.app-text-center {
+  text-align: center !important;
+}
+.app-text-bold {
+  font-weight: 700 !important;
+}
+.app-text-semibold {
+  font-weight: 600 !important;
+}
+.app-text-primary {
+  color: #667eea !important;
+}
+.app-text-secondary {
+  color: #764ba2 !important;
+}
+
+/* ===== RESPONSIVE UTILITIES ===== */
+@media (max-width: 768px) {
+  .page-container,
+  .page-container-center {
+    padding: 0.75rem;
+  }
+
+  .app-card-content,
+  .app-card-content-large {
+    padding: 1rem !important;
+  }
+}
+
