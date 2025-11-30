@@ -101,10 +101,14 @@ export const AuthProvider = ({ children }) => {
   // Reset password
   const resetPassword = async (email) => {
     try {
-      // Use window.location.origin so the redirect goes to the app that originated the request
-      // This ensures letsMeet redirects to letsMeet and productive redirects to productive
+      // Use environment variable for production URL, or fall back to current origin
+      // This ensures each app (letsMeet vs productive) redirects to its own domain
+      // Set VITE_APP_URL in your .env file to your production domain (e.g., https://productive.vercel.app)
+      const baseUrl = import.meta.env.VITE_APP_URL || window.location.origin;
+      const redirectUrl = `${baseUrl}/reset-password`;
+
       const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset-password`,
+        redirectTo: redirectUrl,
       });
 
       if (error) throw error;
