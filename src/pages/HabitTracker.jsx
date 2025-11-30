@@ -8,49 +8,96 @@ import {
   Card,
   CardContent,
   IconButton,
+  TextField,
+  Button,
+  FormControl,
+  FormLabel,
+  RadioGroup,
+  FormControlLabel,
+  Radio,
+  Chip,
+  Select,
+  MenuItem,
+  InputLabel,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from "@mui/material";
-import { ChevronLeft, ChevronRight } from "@mui/icons-material";
+import { ChevronLeft, ChevronRight, Add, Delete } from "@mui/icons-material";
 import HamburgerMenu from "../components/HamburgerMenu";
-import { getHabit, updateHabitCheckedDays } from "../lib/supabase";
+import {
+  getHabit,
+  updateHabitCheckedDays,
+  updateHabitReadingData,
+  updateHabitBooks,
+} from "../lib/supabase";
 
 function HabitTracker() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { habitName, habitId, createdAt } = location.state || {
+  const { habitName, habitId, frequency, createdAt } = location.state || {
     habitName: "My Habit",
     habitId: null,
+    frequency: "daily",
     createdAt: new Date().toISOString(),
   };
-  
+
+  const isReading = frequency === "reading";
+
   // Parse creation date and set initial currentDate to the month containing creation date
   const creationDate = new Date(createdAt);
   creationDate.setHours(0, 0, 0, 0);
-  
+
   // Initialize currentDate to the month of creation (or current month if creation is in the past)
   const initialDate = new Date(creationDate);
   initialDate.setDate(1); // Start of the month
-  
+
   const [currentDate, setCurrentDate] = useState(initialDate);
   const [checkedDays, setCheckedDays] = useState(new Set());
+  const [readingData, setReadingData] = useState({}); // Object with date keys and array of { bookId, value }
   const [saving, setSaving] = useState(false);
 
-  // Load checked days from database on mount
+  // Book tracking states (for reading habits)
+  const [books, setBooks] = useState([]); // Array of { id, name, totalPages, trackingMode }
+  const [newBookName, setNewBookName] = useState("");
+  const [newBookTotalPages, setNewBookTotalPages] = useState("");
+  const [newBookTrackingMode, setNewBookTrackingMode] = useState("pages"); // "pages" or "percentage"
+
+  // Modal state for reading progress
+  const [readingModalOpen, setReadingModalOpen] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(null);
+  const [modalBookValues, setModalBookValues] = useState({}); // { bookId: value }
+
+  // Load data from database on mount
   useEffect(() => {
-    const loadCheckedDays = async () => {
+    const loadHabitData = async () => {
       if (habitId) {
         try {
           const habit = await getHabit(habitId);
-          if (habit?.habit_data?.checkedDays) {
-            setCheckedDays(new Set(habit.habit_data.checkedDays));
+          if (isReading) {
+            // Load reading data
+            if (habit?.habit_data?.readingData) {
+              setReadingData(habit.habit_data.readingData);
+            }
+            // Load books
+            if (habit?.habit_data?.books) {
+              setBooks(habit.habit_data.books);
+            }
+          } else {
+            // Load checked days
+            if (habit?.habit_data?.checkedDays) {
+              setCheckedDays(new Set(habit.habit_data.checkedDays));
+            }
           }
         } catch (err) {
-          console.error("Error loading checked days:", err);
+          console.error("Error loading habit data:", err);
         }
       }
     };
 
-    loadCheckedDays();
-  }, [habitId]);
+    loadHabitData();
+  }, [habitId, isReading]);
 
   // Get the first day of the current month
   const firstDayOfMonth = new Date(
@@ -86,20 +133,20 @@ function HabitTracker() {
     return date.toISOString().split("T")[0]; // YYYY-MM-DD format
   };
 
-  // Handle checkbox toggle
+  // Handle checkbox toggle (for daily habits)
   const handleToggle = async (day) => {
     const dateKey = getDateKey(day);
     const newCheckedDays = new Set(checkedDays);
-    
+
     if (newCheckedDays.has(dateKey)) {
       newCheckedDays.delete(dateKey);
     } else {
       newCheckedDays.add(dateKey);
     }
-    
+
     // Update local state immediately for responsive UI
     setCheckedDays(newCheckedDays);
-    
+
     // Save to database if habitId exists
     if (habitId) {
       try {
@@ -115,6 +162,144 @@ function HabitTracker() {
     }
   };
 
+  // Handle reading day click - open modal
+  const handleReadingDayClick = (day) => {
+    if (!isValidDay(day) || books.length === 0) return;
+
+    const dateKey = getDateKey(day);
+    setSelectedDate(dateKey);
+
+    // Load existing values for this date
+    const dayReadingData = readingData[dateKey];
+    const initialValues = {};
+
+    if (dayReadingData) {
+      // Handle both old format (number) and new format (object or array)
+      if (typeof dayReadingData === "number") {
+        // Old format - assign to first book if exists
+        if (books.length > 0) {
+          initialValues[books[0].id] = dayReadingData;
+        }
+      } else if (Array.isArray(dayReadingData)) {
+        // New format - array of { bookId, value }
+        dayReadingData.forEach((entry) => {
+          if (entry.bookId && entry.value) {
+            initialValues[entry.bookId] = entry.value;
+          }
+        });
+      } else if (dayReadingData.bookId && dayReadingData.value) {
+        // Single book entry
+        initialValues[dayReadingData.bookId] = dayReadingData.value;
+      }
+    }
+
+    setModalBookValues(initialValues);
+    setReadingModalOpen(true);
+  };
+
+  // Helper function to get yesterday's date key
+  const getYesterdayDateKey = (dateKey) => {
+    const date = new Date(dateKey);
+    date.setDate(date.getDate() - 1);
+    return date.toISOString().split("T")[0];
+  };
+
+  // Helper function to get yesterday's value for a book
+  const getYesterdayBookValue = (bookId, dateKey) => {
+    const yesterdayKey = getYesterdayDateKey(dateKey);
+    const yesterdayData = readingData[yesterdayKey];
+
+    if (!yesterdayData) return null;
+
+    // Handle different data formats
+    if (Array.isArray(yesterdayData)) {
+      const bookEntry = yesterdayData.find((entry) => entry.bookId === bookId);
+      return bookEntry ? bookEntry.value : null;
+    } else if (
+      typeof yesterdayData === "object" &&
+      yesterdayData.bookId === bookId
+    ) {
+      return yesterdayData.value;
+    } else if (
+      typeof yesterdayData === "number" &&
+      books.length > 0 &&
+      books[0].id === bookId
+    ) {
+      // Old format - assume first book
+      return yesterdayData;
+    }
+
+    return null;
+  };
+
+  // Handle saving reading progress from modal
+  const handleSaveReadingProgress = async () => {
+    if (!habitId || !selectedDate) return;
+
+    // Build reading data array for this date with calculated pages
+    const dayEntries = [];
+    books.forEach((book) => {
+      const value = modalBookValues[book.id];
+      if (value !== undefined && value !== "" && parseFloat(value) > 0) {
+        const inputValue = parseFloat(value);
+        let pagesRead = 0;
+
+        if (book.trackingMode === "pages") {
+          // For Page Number: subtract yesterday's value from today's value
+          const yesterdayValue = getYesterdayBookValue(book.id, selectedDate);
+          if (yesterdayValue !== null) {
+            pagesRead = Math.max(0, inputValue - yesterdayValue);
+          } else {
+            // If no yesterday data, assume all pages read today
+            pagesRead = inputValue;
+          }
+        } else if (book.trackingMode === "percentage") {
+          // For Percentage: calculate pages based on percentage and total pages
+          pagesRead = Math.round((inputValue / 100) * book.totalPages);
+        }
+
+        dayEntries.push({
+          bookId: book.id,
+          value: inputValue,
+          pagesRead: pagesRead,
+        });
+      }
+    });
+
+    // Update reading data
+    const newReadingData = { ...readingData };
+    if (dayEntries.length > 0) {
+      newReadingData[selectedDate] = dayEntries;
+    } else {
+      delete newReadingData[selectedDate];
+    }
+
+    // Update local state
+    setReadingData(newReadingData);
+
+    // Save to database
+    setSaving(true);
+    try {
+      await updateHabitReadingData(habitId, newReadingData);
+      setReadingModalOpen(false);
+      setSelectedDate(null);
+      setModalBookValues({});
+    } catch (err) {
+      console.error("Error saving reading data:", err);
+      // Revert on error
+      setReadingData(readingData);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Handle closing modal without saving
+  const handleCloseReadingModal = () => {
+    setReadingModalOpen(false);
+    setSelectedDate(null);
+    setModalBookValues({});
+  };
+
   // Navigate to previous month (only if not before creation date)
   const handlePreviousMonth = () => {
     const previousMonth = new Date(
@@ -127,7 +312,7 @@ function HabitTracker() {
       creationDate.getMonth(),
       1
     );
-    
+
     // Only allow navigation if previous month is not before creation month
     if (previousMonth >= creationMonth) {
       setCurrentDate(previousMonth);
@@ -140,7 +325,7 @@ function HabitTracker() {
       new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1)
     );
   };
-  
+
   // Check if previous month button should be disabled
   const canGoPrevious = () => {
     const previousMonth = new Date(
@@ -170,14 +355,14 @@ function HabitTracker() {
       day
     );
     date.setHours(0, 0, 0, 0);
-    
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    
+
     // Day must be on or after creation date and not in the future
     return date >= creationDate && date <= today;
   };
-  
+
   // Check if a day is before creation date (should be grayed out)
   const isBeforeCreation = (day) => {
     const date = new Date(
@@ -200,18 +385,41 @@ function HabitTracker() {
       const checkDate = new Date(today);
       checkDate.setDate(today.getDate() - i);
       checkDate.setHours(0, 0, 0, 0);
-      
+
       // Stop if we've gone before the creation date
       if (checkDate < creationDate) {
         break;
       }
-      
+
       const dateKey = checkDate.toISOString().split("T")[0];
 
-      if (checkedDays.has(dateKey)) {
-        streak++;
+      if (isReading) {
+        // For reading, check if there's any reading data for this day
+        const dayReadingData = readingData[dateKey];
+        let hasReading = false;
+
+        if (dayReadingData) {
+          if (typeof dayReadingData === "number") {
+            hasReading = dayReadingData > 0;
+          } else if (Array.isArray(dayReadingData)) {
+            hasReading = dayReadingData.some((entry) => entry.value > 0);
+          } else if (dayReadingData.value) {
+            hasReading = dayReadingData.value > 0;
+          }
+        }
+
+        if (hasReading) {
+          streak++;
+        } else {
+          break;
+        }
       } else {
-        break;
+        // For daily, check if day is checked
+        if (checkedDays.has(dateKey)) {
+          streak++;
+        } else {
+          break;
+        }
       }
     }
     return streak;
@@ -254,6 +462,180 @@ function HabitTracker() {
             >
               Track your daily progress
             </Typography>
+
+            {/* Book Management Section - Only for Reading habits */}
+            {isReading && (
+              <Box
+                sx={{
+                  mb: 3,
+                  p: 2,
+                  backgroundColor: "#f8f9fa",
+                  borderRadius: 2,
+                  border: "1px solid #e2e8f0",
+                }}
+              >
+                <Typography
+                  variant="h6"
+                  className="app-text-primary"
+                  sx={{ mb: 2, fontWeight: 600 }}
+                >
+                  My Books
+                </Typography>
+
+                {/* Add New Book */}
+                <Box sx={{ mb: 2 }}>
+                  <Box
+                    sx={{
+                      display: "flex",
+                      gap: 1,
+                      flexWrap: "wrap",
+                      alignItems: "flex-end",
+                    }}
+                  >
+                    <TextField
+                      label="Book Title"
+                      value={newBookName}
+                      onChange={(e) => setNewBookName(e.target.value)}
+                      placeholder="Enter book name"
+                      size="small"
+                      sx={{ flex: 1, minWidth: 150 }}
+                    />
+                    <FormControl size="small" sx={{ minWidth: 140 }}>
+                      <InputLabel>Track By</InputLabel>
+                      <Select
+                        value={newBookTrackingMode}
+                        onChange={(e) => setNewBookTrackingMode(e.target.value)}
+                        label="Track By"
+                      >
+                        <MenuItem value="pages">Page Number</MenuItem>
+                        <MenuItem value="percentage">Percentage</MenuItem>
+                      </Select>
+                    </FormControl>
+                    <TextField
+                      label="Total Pages"
+                      type="number"
+                      value={newBookTotalPages}
+                      onChange={(e) => setNewBookTotalPages(e.target.value)}
+                      placeholder="Required"
+                      required
+                      size="small"
+                      inputProps={{ min: 1 }}
+                      sx={{ width: 120 }}
+                    />
+                    <Button
+                      variant="contained"
+                      startIcon={<Add />}
+                      onClick={async () => {
+                        if (!newBookName.trim()) return;
+                        if (
+                          !newBookTotalPages ||
+                          parseInt(newBookTotalPages) <= 0
+                        ) {
+                          return; // Require total pages
+                        }
+
+                        const newBook = {
+                          id: `book-${Date.now()}`,
+                          name: newBookName.trim(),
+                          totalPages: parseInt(newBookTotalPages),
+                          trackingMode: newBookTrackingMode,
+                          createdAt: new Date().toISOString(),
+                        };
+
+                        const updatedBooks = [...books, newBook];
+                        setBooks(updatedBooks);
+                        setNewBookName("");
+                        setNewBookTotalPages("");
+                        setNewBookTrackingMode("pages");
+
+                        // Save to database
+                        if (habitId) {
+                          try {
+                            await updateHabitBooks(habitId, updatedBooks);
+                          } catch (err) {
+                            console.error("Error saving book:", err);
+                            setBooks(books); // Revert on error
+                          }
+                        }
+                      }}
+                      sx={{
+                        background:
+                          "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                        "&:hover": {
+                          background:
+                            "linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%)",
+                        },
+                      }}
+                    >
+                      Add Book
+                    </Button>
+                  </Box>
+                </Box>
+
+                {/* Book List */}
+                {books.length > 0 && (
+                  <Box>
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{ mb: 1, fontWeight: 500 }}
+                    >
+                      Your Books ({books.length}):
+                    </Typography>
+                    <Box
+                      sx={{
+                        display: "flex",
+                        gap: 1,
+                        flexWrap: "wrap",
+                        alignItems: "center",
+                      }}
+                    >
+                      {books.map((book) => (
+                        <Chip
+                          key={book.id}
+                          label={`${book.name} (${
+                            book.trackingMode === "pages" ? "Pages" : "%"
+                          })`}
+                          onDelete={
+                            books.length > 1
+                              ? async () => {
+                                  const updatedBooks = books.filter(
+                                    (b) => b.id !== book.id
+                                  );
+                                  setBooks(updatedBooks);
+
+                                  // Save to database
+                                  if (habitId) {
+                                    try {
+                                      await updateHabitBooks(
+                                        habitId,
+                                        updatedBooks
+                                      );
+                                    } catch (err) {
+                                      console.error(
+                                        "Error deleting book:",
+                                        err
+                                      );
+                                      setBooks(books); // Revert on error
+                                    }
+                                  }
+                                }
+                              : undefined
+                          }
+                          color="default"
+                        />
+                      ))}
+                    </Box>
+                  </Box>
+                )}
+
+                {books.length === 0 && (
+                  <Typography variant="body2" color="text.secondary">
+                    Add your first book to start tracking your reading progress
+                  </Typography>
+                )}
+              </Box>
+            )}
 
             {/* Month Navigation */}
             <Box
@@ -337,7 +719,7 @@ function HabitTracker() {
                   day === new Date().getDate() &&
                   currentDate.getMonth() === new Date().getMonth() &&
                   currentDate.getFullYear() === new Date().getFullYear();
-                
+
                 // Check if this is the creation date
                 const dayDate = new Date(
                   currentDate.getFullYear(),
@@ -348,6 +730,107 @@ function HabitTracker() {
                 const isCreationDate =
                   dayDate.getTime() === creationDate.getTime();
 
+                // For reading habits, show clickable box
+                if (isReading) {
+                  // Check if this day has any reading data and calculate total pages
+                  const dayReadingData = readingData[dateKey];
+                  let hasReading = false;
+                  let totalPagesRead = 0;
+
+                  if (dayReadingData) {
+                    if (typeof dayReadingData === "number") {
+                      // Old format: assume it's pages
+                      hasReading = dayReadingData > 0;
+                      totalPagesRead = dayReadingData;
+                    } else if (Array.isArray(dayReadingData)) {
+                      // New format: array of { bookId, value, pagesRead }
+                      hasReading = dayReadingData.length > 0;
+                      totalPagesRead = dayReadingData.reduce((sum, entry) => {
+                        return sum + (entry.pagesRead || 0);
+                      }, 0);
+                    } else if (dayReadingData.bookId && dayReadingData.value) {
+                      // Single book entry
+                      hasReading = dayReadingData.value > 0;
+                      totalPagesRead = dayReadingData.pagesRead || 0;
+                    }
+                  }
+
+                  return (
+                    <Box
+                      key={day}
+                      onClick={() => handleReadingDayClick(day)}
+                      sx={{
+                        height: 60,
+                        border: isToday
+                          ? "2px solid #667eea"
+                          : isCreationDate
+                          ? "2px solid #764ba2"
+                          : "2px solid #e2e8f0",
+                        borderRadius: 2,
+                        backgroundColor: hasReading ? "#667eea" : "white",
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        cursor:
+                          isValid && books.length > 0
+                            ? "pointer"
+                            : "not-allowed",
+                        transition: "all 0.2s ease",
+                        opacity: isValid ? 1 : isBefore ? 0.3 : 0.5,
+                        position: "relative",
+                        "&:hover":
+                          isValid && books.length > 0
+                            ? {
+                                borderColor: "#667eea",
+                                backgroundColor: hasReading
+                                  ? "#5a6fd8"
+                                  : "#f5f5f5",
+                                transform: "scale(1.05)",
+                              }
+                            : {},
+                      }}
+                    >
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          fontWeight: isToday || isCreationDate ? 700 : 500,
+                          color: hasReading ? "white" : "#2d3748",
+                          fontSize: "0.75rem",
+                        }}
+                      >
+                        {day}
+                      </Typography>
+                      {hasReading && (
+                        <Typography
+                          variant="caption"
+                          sx={{
+                            fontSize: "0.6rem",
+                            color: "white",
+                            mt: 0.25,
+                          }}
+                        >
+                          {totalPagesRead}{" "}
+                          {totalPagesRead === 1 ? "page" : "pages"}
+                        </Typography>
+                      )}
+                      {isCreationDate && !hasReading && (
+                        <Box
+                          sx={{
+                            width: 4,
+                            height: 4,
+                            borderRadius: "50%",
+                            backgroundColor: "#764ba2",
+                            position: "absolute",
+                            bottom: 4,
+                          }}
+                        />
+                      )}
+                    </Box>
+                  );
+                }
+
+                // For daily habits, show checkbox
                 return (
                   <Box
                     key={day}
@@ -451,10 +934,35 @@ function HabitTracker() {
                   className="app-text-primary"
                   fontWeight={700}
                 >
-                  {checkedDays.size}
+                  {isReading
+                    ? Object.values(readingData).reduce((sum, dayData) => {
+                        if (!dayData) return sum;
+
+                        // Handle different data formats
+                        if (Array.isArray(dayData)) {
+                          // New format: array of { bookId, value, pagesRead }
+                          return (
+                            sum +
+                            dayData.reduce((daySum, entry) => {
+                              return daySum + (entry.pagesRead || 0);
+                            }, 0)
+                          );
+                        } else if (
+                          typeof dayData === "object" &&
+                          dayData.pagesRead
+                        ) {
+                          // Single entry with pagesRead
+                          return sum + (dayData.pagesRead || 0);
+                        } else if (typeof dayData === "number") {
+                          // Old format: just a number (assume it's pages)
+                          return sum + dayData;
+                        }
+                        return sum;
+                      }, 0)
+                    : checkedDays.size}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Total Days
+                  {isReading ? "Total Pages" : "Total Days"}
                 </Typography>
               </Box>
               <Box sx={{ textAlign: "center" }}>
@@ -466,16 +974,37 @@ function HabitTracker() {
                   {(() => {
                     const today = new Date();
                     today.setHours(0, 0, 0, 0);
-                    const daysSinceCreation = Math.ceil(
-                      (today - creationDate) / (1000 * 60 * 60 * 24)
-                    ) + 1; // +1 to include creation day
-                    const validDaysInMonth = days.filter((day) =>
-                      isValidDay(day)
-                    ).length;
-                    const totalDays = daysSinceCreation > 0 ? daysSinceCreation : validDaysInMonth;
-                    return totalDays > 0
-                      ? Math.round((checkedDays.size / totalDays) * 100)
-                      : 0;
+                    const daysSinceCreation =
+                      Math.ceil(
+                        (today - creationDate) / (1000 * 60 * 60 * 24)
+                      ) + 1; // +1 to include creation day
+                    const totalDays =
+                      daysSinceCreation > 0 ? daysSinceCreation : 1;
+
+                    if (isReading) {
+                      // For reading, count days with any reading data
+                      const daysWithReading = Object.keys(readingData).filter(
+                        (dateKey) => {
+                          const dayData = readingData[dateKey];
+                          if (typeof dayData === "number") {
+                            return dayData > 0;
+                          } else if (Array.isArray(dayData)) {
+                            return dayData.some((entry) => entry.value > 0);
+                          } else if (dayData && dayData.value) {
+                            return dayData.value > 0;
+                          }
+                          return false;
+                        }
+                      ).length;
+                      return totalDays > 0
+                        ? Math.round((daysWithReading / totalDays) * 100)
+                        : 0;
+                    } else {
+                      // For daily, count checked days
+                      return totalDays > 0
+                        ? Math.round((checkedDays.size / totalDays) * 100)
+                        : 0;
+                    }
                   })()}
                   %
                 </Typography>
@@ -487,6 +1016,126 @@ function HabitTracker() {
           </CardContent>
         </Card>
       </Container>
+
+      {/* Reading Progress Modal */}
+      <Dialog
+        open={readingModalOpen}
+        onClose={handleCloseReadingModal}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          Update Reading Progress -{" "}
+          {selectedDate &&
+            new Date(selectedDate).toLocaleDateString("en-US", {
+              weekday: "long",
+              year: "numeric",
+              month: "long",
+              day: "numeric",
+            })}
+        </DialogTitle>
+        <DialogContent>
+          {books.length === 0 ? (
+            <Typography color="text.secondary" align="center" sx={{ py: 3 }}>
+              Please add a book first to track your reading progress.
+            </Typography>
+          ) : (
+            <Box
+              sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 1 }}
+            >
+              {books.map((book) => {
+                const currentValue = modalBookValues[book.id] || "";
+                const placeholder =
+                  book.trackingMode === "percentage" ? "0%" : "0";
+                const maxValue =
+                  book.trackingMode === "percentage"
+                    ? 100
+                    : book.totalPages || undefined;
+
+                return (
+                  <Box
+                    key={book.id}
+                    sx={{
+                      p: 2,
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 2,
+                      backgroundColor: "#f8f9fa",
+                    }}
+                  >
+                    <Typography
+                      variant="subtitle2"
+                      sx={{ mb: 1, fontWeight: 600 }}
+                    >
+                      {book.name}
+                      {book.totalPages && (
+                        <Typography
+                          component="span"
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ ml: 1 }}
+                        >
+                          ({book.totalPages} pages)
+                        </Typography>
+                      )}
+                      <Chip
+                        label={
+                          book.trackingMode === "percentage"
+                            ? "Percentage"
+                            : "Pages"
+                        }
+                        size="small"
+                        sx={{ ml: 1, height: 20 }}
+                      />
+                    </Typography>
+                    <TextField
+                      type="number"
+                      fullWidth
+                      value={currentValue}
+                      onChange={(e) => {
+                        setModalBookValues((prev) => ({
+                          ...prev,
+                          [book.id]: e.target.value,
+                        }));
+                      }}
+                      placeholder={placeholder}
+                      inputProps={{
+                        min: 0,
+                        max: maxValue,
+                        step: 1,
+                      }}
+                      helperText={
+                        book.trackingMode === "percentage"
+                          ? "Enter percentage (0-100)"
+                          : book.totalPages
+                          ? `Enter pages (0-${book.totalPages})`
+                          : "Enter number of pages"
+                      }
+                    />
+                  </Box>
+                );
+              })}
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseReadingModal} color="inherit">
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSaveReadingProgress}
+            variant="contained"
+            disabled={saving || books.length === 0}
+            sx={{
+              background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+              "&:hover": {
+                background: "linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%)",
+              },
+            }}
+          >
+            {saving ? "Saving..." : "Save Progress"}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

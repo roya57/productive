@@ -209,3 +209,67 @@ export const updateHabitCheckedDays = async (habitId, checkedDays) => {
     throw err;
   }
 };
+
+// Helper function to update habit reading data
+export const updateHabitReadingData = async (habitId, readingData) => {
+  try {
+    // Get current habit data
+    const currentHabit = await getHabit(habitId);
+    const currentHabitData = currentHabit.habit_data || {};
+
+    // Update habit_data with reading data object
+    const updatedHabitData = {
+      ...currentHabitData,
+      readingData: readingData, // Object with date keys and number values
+    };
+
+    // Update the habit in database
+    const { data, error } = await supabase
+      .from("habits")
+      .update({ habit_data: updatedHabitData })
+      .eq("habit_id", habitId)
+      .select();
+
+    if (error) {
+      console.error("Error updating habit reading data:", error);
+      throw error;
+    }
+
+    return data[0];
+  } catch (err) {
+    console.error("Exception in updateHabitReadingData:", err);
+    throw err;
+  }
+};
+
+// Helper function to update habit books
+export const updateHabitBooks = async (habitId, books) => {
+  try {
+    // Get current habit data
+    const currentHabit = await getHabit(habitId);
+    const currentHabitData = currentHabit.habit_data || {};
+
+    // Update habit_data with books array
+    const updatedHabitData = {
+      ...currentHabitData,
+      books: books, // Array of book objects
+    };
+
+    // Update the habit in database
+    const { data, error } = await supabase
+      .from("habits")
+      .update({ habit_data: updatedHabitData })
+      .eq("habit_id", habitId)
+      .select();
+
+    if (error) {
+      console.error("Error updating habit books:", error);
+      throw error;
+    }
+
+    return data[0];
+  } catch (err) {
+    console.error("Exception in updateHabitBooks:", err);
+    throw err;
+  }
+};

@@ -72,9 +72,7 @@ function CreateHabit() {
       });
     } catch (err) {
       console.error("Error creating habit:", err);
-      setError(
-        err.message || "Failed to create habit. Please try again."
-      );
+      setError(err.message || "Failed to create habit. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -168,6 +166,11 @@ function CreateHabit() {
                     value="daily"
                     control={<Radio />}
                     label="Daily"
+                  />
+                  <FormControlLabel
+                    value="reading"
+                    control={<Radio />}
+                    label="Reading"
                   />
                 </RadioGroup>
               </FormControl>

@@ -34,6 +34,40 @@ function ResetPassword() {
   useEffect(() => {
     const checkSession = async () => {
       try {
+        // Check for hash fragments in URL (Supabase password reset links use hash fragments)
+        const hashParams = new URLSearchParams(
+          window.location.hash.substring(1)
+        );
+        const accessToken = hashParams.get("access_token");
+        const refreshToken = hashParams.get("refresh_token");
+        const type = hashParams.get("type");
+
+        // If we have tokens in the hash, set the session
+        if (accessToken && refreshToken && type === "recovery") {
+          const { data: sessionData, error: sessionError } =
+            await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken,
+            });
+
+          if (sessionError) {
+            console.error("Session error:", sessionError);
+            setError(
+              "Invalid or expired reset link. Please request a new password reset."
+            );
+            setCheckingSession(false);
+            return;
+          }
+
+          // Clear the hash from URL
+          window.history.replaceState(null, "", window.location.pathname);
+
+          // Valid session set, user can reset password
+          setCheckingSession(false);
+          return;
+        }
+
+        // Otherwise, check for existing session
         const {
           data: { session },
           error,

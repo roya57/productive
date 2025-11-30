@@ -9,6 +9,47 @@ function AuthCallback() {
   useEffect(() => {
     const handleAuthCallback = async () => {
       try {
+        // Check URL parameters first to determine the type of callback
+        const urlParams = new URLSearchParams(window.location.search);
+        const type = urlParams.get("type");
+
+        // Also check hash fragments (Supabase sometimes uses hash-based redirects)
+        const hashParams = new URLSearchParams(
+          window.location.hash.substring(1)
+        );
+        const hashType = hashParams.get("type");
+
+        // Handle password reset - check both query params and hash
+        if (type === "recovery" || hashType === "recovery") {
+          // Extract the access token and other params from URL or hash
+          const accessToken =
+            urlParams.get("access_token") || hashParams.get("access_token");
+          const refreshToken =
+            urlParams.get("refresh_token") || hashParams.get("refresh_token");
+
+          if (accessToken && refreshToken) {
+            // Set the session with the tokens from the URL
+            const { error: sessionError } = await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken,
+            });
+
+            if (sessionError) {
+              console.error("Session error:", sessionError);
+              navigate("/signin?error=reset_link_invalid");
+              return;
+            }
+
+            // Redirect to reset password page
+            navigate("/reset-password");
+            return;
+          } else {
+            // Missing tokens, redirect to signin with error
+            navigate("/signin?error=reset_link_invalid");
+            return;
+          }
+        }
+
         // Handle the auth callback from URL parameters
         const { data, error } = await supabase.auth.getSession();
 
@@ -19,9 +60,6 @@ function AuthCallback() {
         }
 
         // Check if this is an email confirmation
-        const urlParams = new URLSearchParams(window.location.search);
-        const type = urlParams.get("type");
-
         if (type === "signup") {
           // Email confirmation successful
           navigate("/signin?message=email_confirmed");

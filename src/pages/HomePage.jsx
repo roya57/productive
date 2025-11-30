@@ -16,10 +16,15 @@ import {
   CircularProgress,
   Alert,
   Checkbox,
+  TextField,
 } from "@mui/material";
 import HamburgerMenu from "../components/HamburgerMenu";
 import { useAuth } from "../contexts/AuthContext";
-import { getUserHabits, updateHabitCheckedDays } from "../lib/supabase";
+import {
+  getUserHabits,
+  updateHabitCheckedDays,
+  updateHabitReadingData,
+} from "../lib/supabase";
 
 function HomePage() {
   const navigate = useNavigate();
@@ -63,7 +68,7 @@ function HomePage() {
     });
   };
 
-  // Check if today is checked for a habit
+  // Check if today is checked for a habit (for daily habits)
   const isTodayChecked = (habit) => {
     const checkedDays = habit.habit_data?.checkedDays || [];
     const today = new Date();
@@ -72,7 +77,44 @@ function HomePage() {
     return checkedDays.includes(todayKey);
   };
 
-  // Handle today checkbox toggle
+  // Get today's reading value for a habit (for reading habits)
+  const getTodayReadingValue = (habit) => {
+    const readingData = habit.habit_data?.readingData || {};
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayKey = today.toISOString().split("T")[0];
+    return readingData[todayKey] || "";
+  };
+
+  // Check if today has reading progress (total pages > 0) for reading habits
+  const isTodayReadingChecked = (habit) => {
+    const readingData = habit.habit_data?.readingData || {};
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayKey = today.toISOString().split("T")[0];
+    const dayReadingData = readingData[todayKey];
+
+    if (!dayReadingData) return false;
+
+    // Calculate total pages read today
+    let totalPages = 0;
+    if (typeof dayReadingData === "number") {
+      // Old format: assume it's pages
+      totalPages = dayReadingData;
+    } else if (Array.isArray(dayReadingData)) {
+      // New format: array of { bookId, value, pagesRead }
+      totalPages = dayReadingData.reduce((sum, entry) => {
+        return sum + (entry.pagesRead || 0);
+      }, 0);
+    } else if (dayReadingData.pagesRead) {
+      // Single book entry with pagesRead
+      totalPages = dayReadingData.pagesRead;
+    }
+
+    return totalPages > 0;
+  };
+
+  // Handle today checkbox toggle (for daily habits)
   const handleTodayToggle = async (habit, event) => {
     event.stopPropagation(); // Prevent navigation when clicking checkbox
 
@@ -113,6 +155,49 @@ function HomePage() {
     }
   };
 
+  // Handle today reading value change (for reading habits)
+  const handleTodayReadingChange = async (habit, value) => {
+    const readingData = { ...(habit.habit_data?.readingData || {}) };
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayKey = today.toISOString().split("T")[0];
+
+    const numValue = value === "" ? 0 : parseInt(value, 10);
+    if (isNaN(numValue) || numValue < 0) {
+      return; // Invalid input
+    }
+
+    if (numValue === 0) {
+      delete readingData[todayKey];
+    } else {
+      readingData[todayKey] = numValue;
+    }
+
+    // Update local state immediately for responsive UI
+    const updatedHabits = habits.map((h) => {
+      if (h.habit_id === habit.habit_id) {
+        return {
+          ...h,
+          habit_data: {
+            ...h.habit_data,
+            readingData: readingData,
+          },
+        };
+      }
+      return h;
+    });
+    setHabits(updatedHabits);
+
+    // Save to database
+    try {
+      await updateHabitReadingData(habit.habit_id, readingData);
+    } catch (err) {
+      console.error("Error updating today's reading:", err);
+      // Revert on error
+      setHabits(habits);
+    }
+  };
+
   const formatDate = (dateString) => {
     if (!dateString) return "";
     const date = new Date(dateString);
@@ -125,9 +210,7 @@ function HomePage() {
 
   // Calculate streak for a habit
   const calculateStreak = (habit) => {
-    const checkedDays = habit.habit_data?.checkedDays || [];
-    if (checkedDays.length === 0) return 0;
-
+    const isReading = habit.habit_data?.frequency === "reading";
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -146,10 +229,47 @@ function HomePage() {
       }
 
       const dateKey = checkDate.toISOString().split("T")[0];
-      if (checkedDays.includes(dateKey)) {
-        streak++;
+
+      if (isReading) {
+        // For reading, check if there's any reading data for this day
+        const readingData = habit.habit_data?.readingData || {};
+        const dayReadingData = readingData[dateKey];
+        let hasReading = false;
+
+        if (dayReadingData) {
+          if (typeof dayReadingData === "number") {
+            // Old format: just a number
+            hasReading = dayReadingData > 0;
+          } else if (Array.isArray(dayReadingData)) {
+            // New format: array of { bookId, value, pagesRead }
+            hasReading = dayReadingData.some((entry) => {
+              // Check if there's any pagesRead > 0 or value > 0
+              return (
+                (entry.pagesRead && entry.pagesRead > 0) ||
+                (entry.value && entry.value > 0)
+              );
+            });
+          } else if (dayReadingData.value) {
+            // Single book entry
+            hasReading =
+              (dayReadingData.pagesRead && dayReadingData.pagesRead > 0) ||
+              (dayReadingData.value && dayReadingData.value > 0);
+          }
+        }
+
+        if (hasReading) {
+          streak++;
+        } else {
+          break;
+        }
       } else {
-        break;
+        // For daily, check if day is checked
+        const checkedDays = habit.habit_data?.checkedDays || [];
+        if (checkedDays.includes(dateKey)) {
+          streak++;
+        } else {
+          break;
+        }
       }
     }
     return streak;
@@ -157,21 +277,57 @@ function HomePage() {
 
   // Calculate completion rate for a habit
   const calculateCompletionRate = (habit) => {
-    const checkedDays = habit.habit_data?.checkedDays || [];
+    const isReading = habit.habit_data?.frequency === "reading";
     const creationDate = new Date(habit.created_at);
     creationDate.setHours(0, 0, 0, 0);
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const daysSinceCreation = Math.ceil(
-      (today - creationDate) / (1000 * 60 * 60 * 24)
-    ) + 1; // +1 to include creation day
+    const daysSinceCreation =
+      Math.ceil((today - creationDate) / (1000 * 60 * 60 * 24)) + 1; // +1 to include creation day
 
     if (daysSinceCreation <= 0) return 0;
 
-    const completionRate = Math.round((checkedDays.length / daysSinceCreation) * 100);
-    return Math.min(completionRate, 100); // Cap at 100%
+    if (isReading) {
+      // For reading, count days with any reading data
+      const readingData = habit.habit_data?.readingData || {};
+      const daysWithReading = Object.keys(readingData).filter((dateKey) => {
+        const dayReadingData = readingData[dateKey];
+        if (!dayReadingData) return false;
+
+        // Handle different data formats
+        if (typeof dayReadingData === "number") {
+          return dayReadingData > 0;
+        } else if (Array.isArray(dayReadingData)) {
+          // New format: array of { bookId, value, pagesRead }
+          return dayReadingData.some((entry) => {
+            return (
+              (entry.pagesRead && entry.pagesRead > 0) ||
+              (entry.value && entry.value > 0)
+            );
+          });
+        } else if (dayReadingData.value) {
+          // Single book entry
+          return (
+            (dayReadingData.pagesRead && dayReadingData.pagesRead > 0) ||
+            (dayReadingData.value && dayReadingData.value > 0)
+          );
+        }
+        return false;
+      }).length;
+      const completionRate = Math.round(
+        (daysWithReading / daysSinceCreation) * 100
+      );
+      return Math.min(completionRate, 100); // Cap at 100%
+    } else {
+      // For daily, count checked days
+      const checkedDays = habit.habit_data?.checkedDays || [];
+      const completionRate = Math.round(
+        (checkedDays.length / daysSinceCreation) * 100
+      );
+      return Math.min(completionRate, 100); // Cap at 100%
+    }
   };
 
   // CircularProgress with label component
@@ -316,6 +472,8 @@ function HomePage() {
                       {habits.map((habit) => {
                         const streak = calculateStreak(habit);
                         const completionRate = calculateCompletionRate(habit);
+                        const isReading =
+                          habit.habit_data?.frequency === "reading";
 
                         return (
                           <ListItem key={habit.habit_id} disablePadding>
@@ -337,7 +495,7 @@ function HomePage() {
                                   display: "flex",
                                   gap: 2,
                                   mr: 2,
-                                  alignItems: "center",
+                                  alignItems: "flex-start",
                                 }}
                               >
                                 {/* Streak */}
@@ -352,7 +510,13 @@ function HomePage() {
                                   <Typography
                                     variant="caption"
                                     color="text.secondary"
-                                    sx={{ mb: 0.5, fontSize: "0.7rem" }}
+                                    sx={{
+                                      mb: 0.5,
+                                      fontSize: "0.7rem",
+                                      height: "1.2rem",
+                                      display: "flex",
+                                      alignItems: "center",
+                                    }}
                                   >
                                     Streak
                                   </Typography>
@@ -377,7 +541,13 @@ function HomePage() {
                                   <Typography
                                     variant="caption"
                                     color="text.secondary"
-                                    sx={{ mb: 0.5, fontSize: "0.7rem" }}
+                                    sx={{
+                                      mb: 0.5,
+                                      fontSize: "0.7rem",
+                                      height: "1.2rem",
+                                      display: "flex",
+                                      alignItems: "center",
+                                    }}
                                   >
                                     Completion
                                   </Typography>
@@ -405,7 +575,8 @@ function HomePage() {
                                       variant="body2"
                                       color="text.secondary"
                                     >
-                                      Frequency: {habit.habit_data?.frequency || "daily"}
+                                      Frequency:{" "}
+                                      {habit.habit_data?.frequency || "daily"}
                                     </Typography>
                                     <Typography
                                       variant="caption"
@@ -418,7 +589,7 @@ function HomePage() {
                                 }
                               />
 
-                              {/* Today Checkbox */}
+                              {/* Today - Checkbox for both daily and reading habits */}
                               <Box
                                 sx={{
                                   display: "flex",
@@ -426,7 +597,13 @@ function HomePage() {
                                   gap: 1,
                                   ml: 2,
                                 }}
-                                onClick={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (isReading) {
+                                    // For reading habits, navigate to tracker
+                                    handleHabitClick(habit);
+                                  }
+                                }}
                               >
                                 <Typography
                                   variant="body2"
@@ -435,19 +612,47 @@ function HomePage() {
                                 >
                                   Today
                                 </Typography>
-                                <Checkbox
-                                  checked={isTodayChecked(habit)}
-                                  onChange={(e) => handleTodayToggle(habit, e)}
-                                  sx={{
-                                    color: "#667eea",
-                                    "&.Mui-checked": {
+                                {isReading ? (
+                                  <Checkbox
+                                    checked={isTodayReadingChecked(habit)}
+                                    onChange={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                    }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleHabitClick(habit);
+                                    }}
+                                    sx={{
                                       color: "#667eea",
-                                    },
-                                    "&:hover": {
-                                      backgroundColor: "rgba(102, 126, 234, 0.08)",
-                                    },
-                                  }}
-                                />
+                                      "&.Mui-checked": {
+                                        color: "#667eea",
+                                      },
+                                      cursor: "pointer",
+                                      "&:hover": {
+                                        backgroundColor:
+                                          "rgba(102, 126, 234, 0.08)",
+                                      },
+                                    }}
+                                  />
+                                ) : (
+                                  <Checkbox
+                                    checked={isTodayChecked(habit)}
+                                    onChange={(e) =>
+                                      handleTodayToggle(habit, e)
+                                    }
+                                    sx={{
+                                      color: "#667eea",
+                                      "&.Mui-checked": {
+                                        color: "#667eea",
+                                      },
+                                      "&:hover": {
+                                        backgroundColor:
+                                          "rgba(102, 126, 234, 0.08)",
+                                      },
+                                    }}
+                                  />
+                                )}
                               </Box>
                             </ListItemButton>
                           </ListItem>
