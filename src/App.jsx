@@ -20,6 +20,7 @@ function App() {
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/create" element={<CreateHabit />} />
+            <Route path="/habit/:habitId/tracker" element={<HabitTracker />} />
             <Route path="/habit/tracker" element={<HabitTracker />} />
             <Route path="/signin" element={<SignInSignUp />} />
             <Route path="/auth/callback" element={<AuthCallback />} />

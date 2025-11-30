@@ -58,14 +58,7 @@ function HomePage() {
   }, [user?.id]);
 
   const handleHabitClick = (habit) => {
-    navigate("/habit/tracker", {
-      state: {
-        habitName: habit.habit_data?.name || "My Habit",
-        habitId: habit.habit_id,
-        frequency: habit.habit_data?.frequency || "daily",
-        createdAt: habit.created_at,
-      },
-    });
+    navigate(`/habit/${habit.habit_id}/tracker`);
   };
 
   // Check if today is checked for a habit (for daily habits)

@@ -61,15 +61,8 @@ function CreateHabit() {
 
       console.log("✅ Habit created successfully:", newHabit);
 
-      // Navigate to habit tracking page with habit info
-      navigate("/habit/tracker", {
-        state: {
-          habitName: habitName.trim(),
-          habitId: newHabit.habit_id,
-          frequency: frequency,
-          createdAt: newHabit.created_at, // Pass creation date
-        },
-      });
+      // Navigate to habit tracking page with unique URL
+      navigate(`/habit/${newHabit.habit_id}/tracker`);
     } catch (err) {
       console.error("Error creating habit:", err);
       setError(err.message || "Failed to create habit. Please try again.");

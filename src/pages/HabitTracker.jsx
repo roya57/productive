@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate, useLocation, useParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import {
   Box,
@@ -23,27 +23,89 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  Snackbar,
+  Tooltip,
 } from "@mui/material";
-import { ChevronLeft, ChevronRight, Add, Delete } from "@mui/icons-material";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Add,
+  Delete,
+  ContentCopy,
+} from "@mui/icons-material";
 import HamburgerMenu from "../components/HamburgerMenu";
 import {
   getHabit,
   updateHabitCheckedDays,
   updateHabitReadingData,
   updateHabitBooks,
+  addHabitToUser,
+  getUserHabits,
 } from "../lib/supabase";
 
 function HabitTracker() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { habitName, habitId, frequency, createdAt } = location.state || {
-    habitName: "My Habit",
-    habitId: null,
-    frequency: "daily",
-    createdAt: new Date().toISOString(),
-  };
+  const { user } = useAuth();
+  const { habitId: habitIdFromParams } = useParams();
+
+  // Get habitId from URL params (preferred) or location state (fallback)
+  const habitIdFromState = location.state?.habitId;
+  const habitId = habitIdFromParams || habitIdFromState;
+
+  const [habit, setHabit] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [isTracking, setIsTracking] = useState(false);
+  const [isTrackingLoading, setIsTrackingLoading] = useState(false);
+
+  // Get habit data from state (if available) or load from database
+  const habitName =
+    location.state?.habitName || habit?.habit_data?.name || "My Habit";
+  const frequency =
+    location.state?.frequency || habit?.habit_data?.frequency || "daily";
+  const createdAt =
+    location.state?.createdAt || habit?.created_at || new Date().toISOString();
 
   const isReading = frequency === "reading";
+
+  // Load habit from database if habitId is in URL
+  useEffect(() => {
+    const loadHabit = async () => {
+      if (habitIdFromParams) {
+        try {
+          setLoading(true);
+          setError(null);
+          const habitData = await getHabit(habitIdFromParams);
+          setHabit(habitData);
+
+          // Check if user is already tracking this habit
+          if (user?.id) {
+            try {
+              const userHabits = await getUserHabits(user.id);
+              const isUserTracking = userHabits.some(
+                (h) => h.habit_id === habitIdFromParams
+              );
+              setIsTracking(isUserTracking);
+            } catch (err) {
+              console.error("Error checking tracking status:", err);
+            }
+          }
+        } catch (err) {
+          console.error("Error loading habit:", err);
+          setError(
+            "Failed to load habit. Please check if the habit ID is correct."
+          );
+        } finally {
+          setLoading(false);
+        }
+      } else {
+        setLoading(false);
+      }
+    };
+
+    loadHabit();
+  }, [habitIdFromParams, user?.id]);
 
   // Parse creation date and set initial currentDate to the month containing creation date
   const creationDate = new Date(createdAt);
@@ -69,35 +131,49 @@ function HabitTracker() {
   const [selectedDate, setSelectedDate] = useState(null);
   const [modalBookValues, setModalBookValues] = useState({}); // { bookId: value }
 
-  // Load data from database on mount
+  // Copy URL state
+  const [copySuccess, setCopySuccess] = useState(false);
+
+  // Load data from database on mount or when habit is loaded
   useEffect(() => {
     const loadHabitData = async () => {
-      if (habitId) {
+      // Use loaded habit if available, otherwise fetch from database
+      let habitToUse = habit;
+
+      if (!habitToUse && habitId) {
         try {
-          const habit = await getHabit(habitId);
+          habitToUse = await getHabit(habitId);
+        } catch (err) {
+          console.error("Error loading habit data:", err);
+          return;
+        }
+      }
+
+      if (habitToUse) {
+        try {
           if (isReading) {
             // Load reading data
-            if (habit?.habit_data?.readingData) {
-              setReadingData(habit.habit_data.readingData);
+            if (habitToUse?.habit_data?.readingData) {
+              setReadingData(habitToUse.habit_data.readingData);
             }
             // Load books
-            if (habit?.habit_data?.books) {
-              setBooks(habit.habit_data.books);
+            if (habitToUse?.habit_data?.books) {
+              setBooks(habitToUse.habit_data.books);
             }
           } else {
             // Load checked days
-            if (habit?.habit_data?.checkedDays) {
-              setCheckedDays(new Set(habit.habit_data.checkedDays));
+            if (habitToUse?.habit_data?.checkedDays) {
+              setCheckedDays(new Set(habitToUse.habit_data.checkedDays));
             }
           }
         } catch (err) {
-          console.error("Error loading habit data:", err);
+          console.error("Error processing habit data:", err);
         }
       }
     };
 
     loadHabitData();
-  }, [habitId, isReading]);
+  }, [habitId, isReading, habit]);
 
   // Get the first day of the current month
   const firstDayOfMonth = new Date(
@@ -300,6 +376,54 @@ function HabitTracker() {
     setModalBookValues({});
   };
 
+  // Copy habit URL to clipboard
+  const handleCopyUrl = async () => {
+    try {
+      const habitUrl = window.location.href;
+      await navigator.clipboard.writeText(habitUrl);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000); // Hide after 2 seconds
+    } catch (err) {
+      console.error("Failed to copy URL:", err);
+      // Fallback for older browsers
+      const textArea = document.createElement("textarea");
+      textArea.value = window.location.href;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textArea);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    }
+  };
+
+  // Handle tracking a habit
+  const handleTrackHabit = async () => {
+    if (!user?.id || !habitId) {
+      // Redirect to sign in if not authenticated
+      navigate(
+        "/signin?returnTo=" + encodeURIComponent(window.location.pathname)
+      );
+      return;
+    }
+
+    try {
+      setIsTrackingLoading(true);
+      await addHabitToUser(user.id, habitId);
+      setIsTracking(true);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    } catch (err) {
+      console.error("Error tracking habit:", err);
+      setError("Failed to track habit. Please try again.");
+    } finally {
+      setIsTrackingLoading(false);
+    }
+  };
+
+  // Check if current user is the creator of the habit
+  const isCreator = user?.id && habit?.habit_data?.user_id === user.id;
+
   // Navigate to previous month (only if not before creation date)
   const handlePreviousMonth = () => {
     const previousMonth = new Date(
@@ -427,6 +551,81 @@ function HabitTracker() {
 
   const streak = calculateStreak();
 
+  // Show loading state
+  if (loading) {
+    return (
+      <Box className="page-container">
+        <Container maxWidth="md">
+          <Card className="app-card">
+            <CardContent className="app-card-content">
+              <Typography variant="h6" align="center" color="text.secondary">
+                Loading habit...
+              </Typography>
+            </CardContent>
+          </Card>
+        </Container>
+      </Box>
+    );
+  }
+
+  // Show error state
+  if (error) {
+    return (
+      <Box className="page-container">
+        <Container maxWidth="md">
+          <Card className="app-card">
+            <CardContent className="app-card-content">
+              <Typography variant="h6" align="center" color="error">
+                {error}
+              </Typography>
+              <Box sx={{ mt: 2, textAlign: "center" }}>
+                <Button
+                  variant="contained"
+                  onClick={() => navigate("/")}
+                  sx={{
+                    background:
+                      "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                  }}
+                >
+                  Go to Home
+                </Button>
+              </Box>
+            </CardContent>
+          </Card>
+        </Container>
+      </Box>
+    );
+  }
+
+  // Show error if no habitId
+  if (!habitId) {
+    return (
+      <Box className="page-container">
+        <Container maxWidth="md">
+          <Card className="app-card">
+            <CardContent className="app-card-content">
+              <Typography variant="h6" align="center" color="error">
+                Habit not found. Please select a habit from the home page.
+              </Typography>
+              <Box sx={{ mt: 2, textAlign: "center" }}>
+                <Button
+                  variant="contained"
+                  onClick={() => navigate("/")}
+                  sx={{
+                    background:
+                      "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                  }}
+                >
+                  Go to Home
+                </Button>
+              </Box>
+            </CardContent>
+          </Card>
+        </Container>
+      </Box>
+    );
+  }
+
   return (
     <Box className="page-container">
       <Container maxWidth="md">
@@ -462,6 +661,125 @@ function HabitTracker() {
             >
               Track your daily progress
             </Typography>
+
+            {/* Habit URL Sharing Section - Only for creators */}
+            {habitId && isCreator && (
+              <Box
+                sx={{
+                  mb: 3,
+                  p: 2,
+                  backgroundColor: "#f8f9fa",
+                  borderRadius: 2,
+                  border: "1px solid #e2e8f0",
+                }}
+              >
+                <Typography
+                  variant="body2"
+                  align="center"
+                  color="text.secondary"
+                  gutterBottom
+                  sx={{ mb: 1 }}
+                >
+                  Share this habit:
+                </Typography>
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 1,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <TextField
+                    value={
+                      typeof window !== "undefined" ? window.location.href : ""
+                    }
+                    size="small"
+                    variant="outlined"
+                    InputProps={{
+                      readOnly: true,
+                      sx: {
+                        fontSize: "0.875rem",
+                        "& .MuiOutlinedInput-input": { padding: "8px 12px" },
+                      },
+                    }}
+                    sx={{
+                      minWidth: "200px",
+                      maxWidth: "400px",
+                      flex: 1,
+                      "& .MuiOutlinedInput-root": {
+                        backgroundColor: "white",
+                      },
+                    }}
+                  />
+                  <Tooltip title="Copy URL">
+                    <IconButton
+                      onClick={handleCopyUrl}
+                      size="small"
+                      sx={{
+                        color: "#667eea",
+                        "&:hover": {
+                          backgroundColor: "rgba(102, 126, 234, 0.08)",
+                        },
+                      }}
+                    >
+                      <ContentCopy fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Box>
+              </Box>
+            )}
+
+            {/* Track Habit Button - Only for non-creators */}
+            {habitId && !isCreator && (
+              <Box
+                sx={{
+                  mb: 3,
+                  p: 2,
+                  backgroundColor: "#f8f9fa",
+                  borderRadius: 2,
+                  border: "1px solid #e2e8f0",
+                  textAlign: "center",
+                }}
+              >
+                {isTracking ? (
+                  <Typography
+                    variant="body2"
+                    color="success.main"
+                    sx={{ fontWeight: 500 }}
+                  >
+                    ✓ You are tracking this habit
+                  </Typography>
+                ) : (
+                  <>
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      gutterBottom
+                      sx={{ mb: 2 }}
+                    >
+                      Track this habit to add it to your habits list
+                    </Typography>
+                    <Button
+                      variant="contained"
+                      onClick={handleTrackHabit}
+                      disabled={isTrackingLoading}
+                      sx={{
+                        background:
+                          "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                        "&:hover": {
+                          background:
+                            "linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%)",
+                        },
+                      }}
+                    >
+                      {isTrackingLoading ? "Adding..." : "Track this Habit"}
+                    </Button>
+                  </>
+                )}
+              </Box>
+            )}
 
             {/* Book Management Section - Only for Reading habits */}
             {isReading && (
@@ -1136,6 +1454,23 @@ function HabitTracker() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Success Snackbar */}
+      <Snackbar
+        open={copySuccess}
+        autoHideDuration={2000}
+        onClose={() => setCopySuccess(false)}
+        message={
+          isCreator ? "URL copied to clipboard!" : "Habit added to your list!"
+        }
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+        sx={{
+          "& .MuiSnackbarContent-root": {
+            backgroundColor: "success.main",
+            color: "white",
+          },
+        }}
+      />
     </Box>
   );
 }

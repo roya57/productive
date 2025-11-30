@@ -59,7 +59,7 @@ export const createHabit = async (habitData, userId = null) => {
 };
 
 // Helper function to add habit to user's habit list in habiters table
-const addHabitToUser = async (userId, habitId) => {
+export const addHabitToUser = async (userId, habitId) => {
   try {
     // Check if habiter record exists
     const { data: existingHabiter, error: fetchError } = await supabase

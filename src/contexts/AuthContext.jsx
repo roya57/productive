@@ -101,6 +101,8 @@ export const AuthProvider = ({ children }) => {
   // Reset password
   const resetPassword = async (email) => {
     try {
+      // Use window.location.origin so the redirect goes to the app that originated the request
+      // This ensures letsMeet redirects to letsMeet and productive redirects to productive
       const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: `${window.location.origin}/reset-password`,
       });
