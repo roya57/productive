@@ -37,14 +37,14 @@ export const createHabit = async (habitData, userId = null) => {
 
     const createdHabit = data[0];
 
-    // If user is authenticated, add habit to their habiters record
+    // If user is authenticated, add habit to their "created" list in habiters record
     if (userId) {
       try {
-        await addHabitToUser(userId, createdHabit.habit_id);
-        console.log("✅ Habit added to user's habit list");
+        await addHabitToCreated(userId, createdHabit.habit_id);
+        console.log("✅ Habit added to user's created list");
       } catch (habiterError) {
         console.error(
-          "Warning: Failed to add habit to user's list:",
+          "Warning: Failed to add habit to user's created list:",
           habiterError
         );
         // Don't throw here - habit creation should succeed even if habiter update fails
@@ -58,8 +58,8 @@ export const createHabit = async (habitData, userId = null) => {
   }
 };
 
-// Helper function to add habit to user's habit list in habiters table
-export const addHabitToUser = async (userId, habitId) => {
+// Helper function to add habit to user's "created" list in habiters table
+export const addHabitToCreated = async (userId, habitId) => {
   try {
     // Check if habiter record exists
     const { data: existingHabiter, error: fetchError } = await supabase
@@ -75,10 +75,17 @@ export const addHabitToUser = async (userId, habitId) => {
     }
 
     if (existingHabiter) {
-      // Habiter exists, add habit to their list if not already there
-      const currentHabits = existingHabiter.habits || [];
-      if (!currentHabits.includes(habitId)) {
-        const updatedHabits = [...currentHabits, habitId];
+      // Habiter exists, initialize habits structure if needed
+      const currentHabits = existingHabiter.habits || {};
+      const created = currentHabits.created || [];
+      const tracked = currentHabits.tracked || [];
+
+      // Add to created if not already there
+      if (!created.includes(habitId)) {
+        const updatedHabits = {
+          created: [...created, habitId],
+          tracked: tracked,
+        };
 
         const { data, error } = await supabase
           .from("habiters")
@@ -95,13 +102,103 @@ export const addHabitToUser = async (userId, habitId) => {
       }
       return existingHabiter;
     } else {
-      // Habiter doesn't exist, create new one
+      // Habiter doesn't exist, create new one with habits structure
       const { data, error } = await supabase
         .from("habiters")
         .insert([
           {
             habiter_id: userId,
-            habits: [habitId],
+            habits: {
+              created: [habitId],
+              tracked: [],
+            },
+          },
+        ])
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Error creating habiter record:", error);
+        throw error;
+      }
+
+      return data;
+    }
+  } catch (err) {
+    console.error("Exception in addHabitToCreated:", err);
+    throw err;
+  }
+};
+
+// Helper function to add habit to user's "tracked" list in habiters table
+// This is called when a non-creator clicks "Track This Habit" button
+export const addHabitToUser = async (userId, habitId) => {
+  try {
+    // Check if habiter record exists
+    const { data: existingHabiter, error: fetchError } = await supabase
+      .from("habiters")
+      .select("habiter_id, habits")
+      .eq("habiter_id", userId)
+      .single();
+
+    if (fetchError && fetchError.code !== "PGRST116") {
+      // PGRST116 = no rows returned
+      console.error("Error checking habiter record:", fetchError);
+      throw fetchError;
+    }
+
+    if (existingHabiter) {
+      // Habiter exists, handle both old format (array) and new format (object)
+      let currentHabits = existingHabiter.habits;
+
+      // If habits is an array (old format), convert to new format
+      if (Array.isArray(currentHabits)) {
+        currentHabits = {
+          created: [],
+          tracked: [...currentHabits],
+        };
+      }
+
+      // Initialize habits structure if needed
+      const habitsData = currentHabits || {};
+      const created = habitsData.created || [];
+      const tracked = habitsData.tracked || [];
+
+      // Add to tracked if not already there
+      // Note: We don't check if it's in created because this function is only
+      // called for non-creators, so it shouldn't be in created
+      if (!tracked.includes(habitId)) {
+        const updatedHabits = {
+          created: created,
+          tracked: [...tracked, habitId],
+        };
+
+        const { data, error } = await supabase
+          .from("habiters")
+          .update({ habits: updatedHabits })
+          .eq("habiter_id", userId)
+          .select();
+
+        if (error) {
+          console.error("Error updating habiter habits:", error);
+          throw error;
+        }
+
+        return data[0];
+      }
+      // If already in tracked, just return existing record
+      return existingHabiter;
+    } else {
+      // Habiter doesn't exist, create new one with habits structure
+      const { data, error } = await supabase
+        .from("habiters")
+        .insert([
+          {
+            habiter_id: userId,
+            habits: {
+              created: [],
+              tracked: [habitId],
+            },
           },
         ])
         .select()
@@ -120,7 +217,7 @@ export const addHabitToUser = async (userId, habitId) => {
   }
 };
 
-// Helper function to get all habits for a user
+// Helper function to get all habits for a user (both created and tracked)
 export const getUserHabits = async (userId) => {
   try {
     // Get user's habit IDs from habiters table
@@ -135,7 +232,19 @@ export const getUserHabits = async (userId) => {
       throw habiterError;
     }
 
-    if (!habiter || !habiter.habits || habiter.habits.length === 0) {
+    if (!habiter || !habiter.habits) {
+      return [];
+    }
+
+    // Get habits from both created and tracked arrays
+    const habitsData = habiter.habits;
+    const created = habitsData.created || [];
+    const tracked = habitsData.tracked || [];
+
+    // Combine both arrays and remove duplicates
+    const allHabitIds = [...new Set([...created, ...tracked])];
+
+    if (allHabitIds.length === 0) {
       return [];
     }
 
@@ -143,7 +252,7 @@ export const getUserHabits = async (userId) => {
     const { data: habits, error: habitsError } = await supabase
       .from("habits")
       .select("*")
-      .in("habit_id", habiter.habits);
+      .in("habit_id", allHabitIds);
 
     if (habitsError) {
       console.error("Error fetching habits:", habitsError);
@@ -153,6 +262,78 @@ export const getUserHabits = async (userId) => {
     return habits || [];
   } catch (err) {
     console.error("Exception in getUserHabits:", err);
+    throw err;
+  }
+};
+
+// Helper function to get created and tracked habits separately
+export const getUserHabitsByType = async (userId) => {
+  try {
+    // Get user's habit IDs from habiters table
+    const { data: habiter, error: habiterError } = await supabase
+      .from("habiters")
+      .select("habits")
+      .eq("habiter_id", userId)
+      .single();
+
+    if (habiterError && habiterError.code !== "PGRST116") {
+      console.error("Error fetching habiter:", habiterError);
+      throw habiterError;
+    }
+
+    if (!habiter || !habiter.habits) {
+      return { created: [], tracked: [] };
+    }
+
+    // Handle both old format (array) and new format (object)
+    let habitsData = habiter.habits;
+    if (Array.isArray(habitsData)) {
+      // Old format: convert to new format with all in tracked
+      habitsData = {
+        created: [],
+        tracked: [...habitsData],
+      };
+    }
+
+    const createdIds = habitsData.created || [];
+    const trackedIds = habitsData.tracked || [];
+
+    // Get full habit data for created habits
+    let createdHabits = [];
+    if (createdIds.length > 0) {
+      const { data, error } = await supabase
+        .from("habits")
+        .select("*")
+        .in("habit_id", createdIds);
+
+      if (error) {
+        console.error("Error fetching created habits:", error);
+        throw error;
+      }
+      createdHabits = data || [];
+    }
+
+    // Get full habit data for tracked habits
+    let trackedHabits = [];
+    if (trackedIds.length > 0) {
+      const { data, error } = await supabase
+        .from("habits")
+        .select("*")
+        .in("habit_id", trackedIds);
+
+      if (error) {
+        console.error("Error fetching tracked habits:", error);
+        throw error;
+      }
+      trackedHabits = data || [];
+    }
+
+    return {
+      created: createdHabits,
+      tracked: trackedHabits,
+    };
+  } catch (err) {
+    console.error("Exception in getUserHabitsByType:", err);
     throw err;
   }
 };

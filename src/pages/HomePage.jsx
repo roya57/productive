@@ -17,11 +17,13 @@ import {
   Alert,
   Checkbox,
   TextField,
+  Tabs,
+  Tab,
 } from "@mui/material";
 import HamburgerMenu from "../components/HamburgerMenu";
 import { useAuth } from "../contexts/AuthContext";
 import {
-  getUserHabits,
+  getUserHabitsByType,
   updateHabitCheckedDays,
   updateHabitReadingData,
 } from "../lib/supabase";
@@ -31,7 +33,8 @@ function HomePage() {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
   const { user } = useAuth();
-  const [habits, setHabits] = useState([]);
+  const [activeTab, setActiveTab] = useState(0);
+  const [habits, setHabits] = useState({ created: [], tracked: [] });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -41,7 +44,7 @@ function HomePage() {
         try {
           setLoading(true);
           setError(null);
-          const userHabits = await getUserHabits(user.id);
+          const userHabits = await getUserHabitsByType(user.id);
           setHabits(userHabits);
         } catch (err) {
           console.error("Error loading habits:", err);
@@ -50,12 +53,16 @@ function HomePage() {
           setLoading(false);
         }
       } else {
-        setHabits([]);
+        setHabits({ created: [], tracked: [] });
       }
     };
 
     loadHabits();
   }, [user?.id]);
+
+  const handleTabChange = (event, newValue) => {
+    setActiveTab(newValue);
+  };
 
   const handleHabitClick = (habit) => {
     navigate(`/habit/${habit.habit_id}/tracker`);
@@ -124,7 +131,9 @@ function HomePage() {
     }
 
     // Update local state immediately for responsive UI
-    const updatedHabits = habits.map((h) => {
+    const isCreated = habits.created.some((h) => h.habit_id === habit.habit_id);
+    const habitList = isCreated ? habits.created : habits.tracked;
+    const updatedHabitList = habitList.map((h) => {
       if (h.habit_id === habit.habit_id) {
         return {
           ...h,
@@ -136,15 +145,19 @@ function HomePage() {
       }
       return h;
     });
-    setHabits(updatedHabits);
+    setHabits({
+      created: isCreated ? updatedHabitList : habits.created,
+      tracked: isCreated ? habits.tracked : updatedHabitList,
+    });
 
     // Save to database
     try {
       await updateHabitCheckedDays(habit.habit_id, checkedDays);
     } catch (err) {
       console.error("Error updating today's check:", err);
-      // Revert on error
-      setHabits(habits);
+      // Revert on error - reload habits
+      const userHabits = await getUserHabitsByType(user.id);
+      setHabits(userHabits);
     }
   };
 
@@ -167,7 +180,9 @@ function HomePage() {
     }
 
     // Update local state immediately for responsive UI
-    const updatedHabits = habits.map((h) => {
+    const isCreated = habits.created.some((h) => h.habit_id === habit.habit_id);
+    const habitList = isCreated ? habits.created : habits.tracked;
+    const updatedHabitList = habitList.map((h) => {
       if (h.habit_id === habit.habit_id) {
         return {
           ...h,
@@ -179,15 +194,19 @@ function HomePage() {
       }
       return h;
     });
-    setHabits(updatedHabits);
+    setHabits({
+      created: isCreated ? updatedHabitList : habits.created,
+      tracked: isCreated ? habits.tracked : updatedHabitList,
+    });
 
     // Save to database
     try {
       await updateHabitReadingData(habit.habit_id, readingData);
     } catch (err) {
       console.error("Error updating today's reading:", err);
-      // Revert on error
-      setHabits(habits);
+      // Revert on error - reload habits
+      const userHabits = await getUserHabitsByType(user.id);
+      setHabits(userHabits);
     }
   };
 
@@ -364,6 +383,220 @@ function HomePage() {
     );
   };
 
+  // Render habit list
+  const renderHabitList = (habitList, emptyMessage, isTracked = false) => {
+    if (loading) {
+      return (
+        <Box
+          sx={{
+            display: "flex",
+            justifyContent: "center",
+            p: 3,
+          }}
+        >
+          <CircularProgress />
+        </Box>
+      );
+    }
+
+    if (habitList.length === 0) {
+      return (
+        <Box sx={{ p: 3, textAlign: "center" }}>
+          <Typography variant="body2" color="text.secondary">
+            {emptyMessage}
+          </Typography>
+        </Box>
+      );
+    }
+
+    return (
+      <List sx={{ maxWidth: "500px", mx: "auto" }}>
+        {habitList.map((habit) => {
+          const streak = calculateStreak(habit);
+          const completionRate = calculateCompletionRate(habit);
+          const isReading = habit.habit_data?.frequency === "reading";
+
+          return (
+            <ListItem key={habit.habit_id} disablePadding>
+              <ListItemButton
+                onClick={() => handleHabitClick(habit)}
+                sx={{
+                  borderRadius: 2,
+                  mb: 1,
+                  border: "1px solid #e2e8f0",
+                  "&:hover": {
+                    backgroundColor: "rgba(102, 126, 234, 0.08)",
+                    borderColor: "#667eea",
+                  },
+                }}
+              >
+                {/* Stats Section */}
+                <Box
+                  sx={{
+                    display: "flex",
+                    gap: 2,
+                    mr: 2,
+                    alignItems: "flex-start",
+                  }}
+                >
+                  {/* Streak */}
+                  <Box
+                    sx={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      minWidth: 50,
+                    }}
+                  >
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{
+                        mb: 0.5,
+                        fontSize: "0.7rem",
+                        height: "1.2rem",
+                        display: "flex",
+                        alignItems: "center",
+                      }}
+                    >
+                      Streak
+                    </Typography>
+                    <Typography
+                      variant="h6"
+                      className="app-text-primary"
+                      fontWeight={700}
+                    >
+                      {streak}
+                    </Typography>
+                  </Box>
+
+                  {/* Completion Circle */}
+                  <Box
+                    sx={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      minWidth: 70,
+                    }}
+                  >
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{
+                        mb: 0.5,
+                        fontSize: "0.7rem",
+                        height: "1.2rem",
+                        display: "flex",
+                        alignItems: "center",
+                      }}
+                    >
+                      Completion
+                    </Typography>
+                    <CircularProgressWithLabel
+                      value={completionRate}
+                      size={50}
+                    />
+                  </Box>
+                </Box>
+
+                {/* Habit Info */}
+                <ListItemText
+                  primary={
+                    <Typography
+                      variant="subtitle1"
+                      fontWeight="medium"
+                      className="app-text-primary"
+                    >
+                      {habit.habit_data?.name || "Untitled Habit"}
+                    </Typography>
+                  }
+                  secondary={
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">
+                        Frequency: {habit.habit_data?.frequency || "daily"}
+                      </Typography>
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ display: "block", mt: 0.5 }}
+                      >
+                        Created: {formatDate(habit.created_at)}
+                      </Typography>
+                    </Box>
+                  }
+                />
+
+                {/* Today - Checkbox for both daily and reading habits */}
+                {!isTracked && (
+                  <Box
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 1,
+                      ml: 2,
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (isReading) {
+                        // For reading habits, navigate to tracker
+                        handleHabitClick(habit);
+                      }
+                    }}
+                  >
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{ fontSize: "0.875rem" }}
+                    >
+                      Today
+                    </Typography>
+                    {isReading ? (
+                      <Checkbox
+                        checked={isTodayReadingChecked(habit)}
+                        onChange={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleHabitClick(habit);
+                        }}
+                        sx={{
+                          color: "#667eea",
+                          "&.Mui-checked": {
+                            color: "#667eea",
+                          },
+                          cursor: "pointer",
+                          "&:hover": {
+                            backgroundColor: "rgba(102, 126, 234, 0.08)",
+                          },
+                        }}
+                      />
+                    ) : (
+                      <Checkbox
+                        checked={isTodayChecked(habit)}
+                        onChange={(e) => handleTodayToggle(habit, e)}
+                        sx={{
+                          color: "#667eea",
+                          "&.Mui-checked": {
+                            color: "#667eea",
+                          },
+                          "&:hover": {
+                            backgroundColor: "rgba(102, 126, 234, 0.08)",
+                          },
+                        }}
+                      />
+                    )}
+                  </Box>
+                )}
+              </ListItemButton>
+            </ListItem>
+          );
+        })}
+      </List>
+    );
+  };
+
   return (
     <Box className="page-container">
       <Container maxWidth="lg">
@@ -424,236 +657,73 @@ function HomePage() {
 
               {/* User Habits - show when authenticated */}
               {user && (
-                <Box sx={{ mt: 4 }}>
-                  <Typography
-                    variant="h6"
-                    className="app-text-primary"
-                    sx={{ mb: 2, textAlign: "center", fontWeight: 600 }}
-                  >
-                    My Habits
-                  </Typography>
+                <Card className="app-card" sx={{ mt: 4 }}>
+                  <CardContent>
+                    <Typography variant="h5" gutterBottom>
+                      My Habits
+                    </Typography>
 
-                  {loading && (
+                    {error && (
+                      <Alert severity="error" sx={{ mb: 2 }}>
+                        {error}
+                      </Alert>
+                    )}
+
                     <Box
-                      sx={{
-                        display: "flex",
-                        justifyContent: "center",
-                        p: 3,
-                      }}
+                      sx={{ borderBottom: 1, borderColor: "divider", mb: 2 }}
                     >
-                      <CircularProgress />
+                      <Tabs
+                        value={activeTab}
+                        onChange={handleTabChange}
+                        aria-label="habit tabs"
+                        sx={{
+                          "& .MuiTab-root": {
+                            textTransform: "none",
+                            fontWeight: 500,
+                            minHeight: 48,
+                          },
+                        }}
+                      >
+                        <Tab
+                          label={`Created (${habits.created.length})`}
+                          id="created-tab"
+                          aria-controls="created-panel"
+                        />
+                        <Tab
+                          label={`Tracked (${habits.tracked.length})`}
+                          id="tracked-tab"
+                          aria-controls="tracked-panel"
+                        />
+                      </Tabs>
                     </Box>
-                  )}
 
-                  {error && (
-                    <Alert severity="error" sx={{ mb: 2 }}>
-                      {error}
-                    </Alert>
-                  )}
-
-                  {!loading && !error && habits.length === 0 && (
-                    <Box sx={{ p: 3, textAlign: "center" }}>
-                      <Typography variant="body2" color="text.secondary">
-                        You haven't created any habits yet. Create your first
-                        habit to get started!
-                      </Typography>
+                    <Box
+                      role="tabpanel"
+                      hidden={activeTab !== 0}
+                      id="created-panel"
+                      aria-labelledby="created-tab"
+                    >
+                      {renderHabitList(
+                        habits.created,
+                        "You haven't created any habits yet. Create your first habit to get started!",
+                        false
+                      )}
                     </Box>
-                  )}
 
-                  {!loading && !error && habits.length > 0 && (
-                    <List sx={{ maxWidth: "500px", mx: "auto" }}>
-                      {habits.map((habit) => {
-                        const streak = calculateStreak(habit);
-                        const completionRate = calculateCompletionRate(habit);
-                        const isReading =
-                          habit.habit_data?.frequency === "reading";
-
-                        return (
-                          <ListItem key={habit.habit_id} disablePadding>
-                            <ListItemButton
-                              onClick={() => handleHabitClick(habit)}
-                              sx={{
-                                borderRadius: 2,
-                                mb: 1,
-                                border: "1px solid #e2e8f0",
-                                "&:hover": {
-                                  backgroundColor: "rgba(102, 126, 234, 0.08)",
-                                  borderColor: "#667eea",
-                                },
-                              }}
-                            >
-                              {/* Stats Section */}
-                              <Box
-                                sx={{
-                                  display: "flex",
-                                  gap: 2,
-                                  mr: 2,
-                                  alignItems: "flex-start",
-                                }}
-                              >
-                                {/* Streak */}
-                                <Box
-                                  sx={{
-                                    display: "flex",
-                                    flexDirection: "column",
-                                    alignItems: "center",
-                                    minWidth: 50,
-                                  }}
-                                >
-                                  <Typography
-                                    variant="caption"
-                                    color="text.secondary"
-                                    sx={{
-                                      mb: 0.5,
-                                      fontSize: "0.7rem",
-                                      height: "1.2rem",
-                                      display: "flex",
-                                      alignItems: "center",
-                                    }}
-                                  >
-                                    Streak
-                                  </Typography>
-                                  <Typography
-                                    variant="h6"
-                                    className="app-text-primary"
-                                    fontWeight={700}
-                                  >
-                                    {streak}
-                                  </Typography>
-                                </Box>
-
-                                {/* Completion Circle */}
-                                <Box
-                                  sx={{
-                                    display: "flex",
-                                    flexDirection: "column",
-                                    alignItems: "center",
-                                    minWidth: 70,
-                                  }}
-                                >
-                                  <Typography
-                                    variant="caption"
-                                    color="text.secondary"
-                                    sx={{
-                                      mb: 0.5,
-                                      fontSize: "0.7rem",
-                                      height: "1.2rem",
-                                      display: "flex",
-                                      alignItems: "center",
-                                    }}
-                                  >
-                                    Completion
-                                  </Typography>
-                                  <CircularProgressWithLabel
-                                    value={completionRate}
-                                    size={50}
-                                  />
-                                </Box>
-                              </Box>
-
-                              {/* Habit Info */}
-                              <ListItemText
-                                primary={
-                                  <Typography
-                                    variant="subtitle1"
-                                    fontWeight="medium"
-                                    className="app-text-primary"
-                                  >
-                                    {habit.habit_data?.name || "Untitled Habit"}
-                                  </Typography>
-                                }
-                                secondary={
-                                  <Box>
-                                    <Typography
-                                      variant="body2"
-                                      color="text.secondary"
-                                    >
-                                      Frequency:{" "}
-                                      {habit.habit_data?.frequency || "daily"}
-                                    </Typography>
-                                    <Typography
-                                      variant="caption"
-                                      color="text.secondary"
-                                      sx={{ display: "block", mt: 0.5 }}
-                                    >
-                                      Created: {formatDate(habit.created_at)}
-                                    </Typography>
-                                  </Box>
-                                }
-                              />
-
-                              {/* Today - Checkbox for both daily and reading habits */}
-                              <Box
-                                sx={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 1,
-                                  ml: 2,
-                                }}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (isReading) {
-                                    // For reading habits, navigate to tracker
-                                    handleHabitClick(habit);
-                                  }
-                                }}
-                              >
-                                <Typography
-                                  variant="body2"
-                                  color="text.secondary"
-                                  sx={{ fontSize: "0.875rem" }}
-                                >
-                                  Today
-                                </Typography>
-                                {isReading ? (
-                                  <Checkbox
-                                    checked={isTodayReadingChecked(habit)}
-                                    onChange={(e) => {
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                    }}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleHabitClick(habit);
-                                    }}
-                                    sx={{
-                                      color: "#667eea",
-                                      "&.Mui-checked": {
-                                        color: "#667eea",
-                                      },
-                                      cursor: "pointer",
-                                      "&:hover": {
-                                        backgroundColor:
-                                          "rgba(102, 126, 234, 0.08)",
-                                      },
-                                    }}
-                                  />
-                                ) : (
-                                  <Checkbox
-                                    checked={isTodayChecked(habit)}
-                                    onChange={(e) =>
-                                      handleTodayToggle(habit, e)
-                                    }
-                                    sx={{
-                                      color: "#667eea",
-                                      "&.Mui-checked": {
-                                        color: "#667eea",
-                                      },
-                                      "&:hover": {
-                                        backgroundColor:
-                                          "rgba(102, 126, 234, 0.08)",
-                                      },
-                                    }}
-                                  />
-                                )}
-                              </Box>
-                            </ListItemButton>
-                          </ListItem>
-                        );
-                      })}
-                    </List>
-                  )}
-                </Box>
+                    <Box
+                      role="tabpanel"
+                      hidden={activeTab !== 1}
+                      id="tracked-panel"
+                      aria-labelledby="tracked-tab"
+                    >
+                      {renderHabitList(
+                        habits.tracked,
+                        "You haven't tracked any habits yet. Browse habits to get started!",
+                        true
+                      )}
+                    </Box>
+                  </CardContent>
+                </Card>
               )}
 
               {/* Instructions for non-authenticated users */}

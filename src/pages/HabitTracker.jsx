@@ -211,6 +211,9 @@ function HabitTracker() {
 
   // Handle checkbox toggle (for daily habits)
   const handleToggle = async (day) => {
+    // Only allow creators to toggle
+    if (!isCreator) return;
+
     const dateKey = getDateKey(day);
     const newCheckedDays = new Set(checkedDays);
 
@@ -240,6 +243,8 @@ function HabitTracker() {
 
   // Handle reading day click - open modal
   const handleReadingDayClick = (day) => {
+    // Only allow creators to edit reading data
+    if (!isCreator) return;
     if (!isValidDay(day) || books.length === 0) return;
 
     const dateKey = getDateKey(day);
@@ -781,8 +786,8 @@ function HabitTracker() {
               </Box>
             )}
 
-            {/* Book Management Section - Only for Reading habits */}
-            {isReading && (
+            {/* Book Management Section - Only for Reading habits and creators */}
+            {isReading && isCreator && (
               <Box
                 sx={{
                   mb: 3,
@@ -1076,7 +1081,12 @@ function HabitTracker() {
                   return (
                     <Box
                       key={day}
-                      onClick={() => handleReadingDayClick(day)}
+                      onClick={() =>
+                        isValid &&
+                        isCreator &&
+                        books.length > 0 &&
+                        handleReadingDayClick(day)
+                      }
                       sx={{
                         height: 60,
                         border: isToday
@@ -1091,14 +1101,14 @@ function HabitTracker() {
                         alignItems: "center",
                         justifyContent: "center",
                         cursor:
-                          isValid && books.length > 0
+                          isValid && isCreator && books.length > 0
                             ? "pointer"
                             : "not-allowed",
                         transition: "all 0.2s ease",
                         opacity: isValid ? 1 : isBefore ? 0.3 : 0.5,
                         position: "relative",
                         "&:hover":
-                          isValid && books.length > 0
+                          isValid && isCreator && books.length > 0
                             ? {
                                 borderColor: "#667eea",
                                 backgroundColor: hasReading
@@ -1152,7 +1162,7 @@ function HabitTracker() {
                 return (
                   <Box
                     key={day}
-                    onClick={() => isValid && handleToggle(day)}
+                    onClick={() => isValid && isCreator && handleToggle(day)}
                     sx={{
                       height: 60,
                       border: isToday
@@ -1165,17 +1175,20 @@ function HabitTracker() {
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      cursor: isValid ? "pointer" : "not-allowed",
+                      cursor: isValid && isCreator ? "pointer" : "not-allowed",
                       transition: "all 0.2s ease",
                       opacity: isValid ? 1 : isBefore ? 0.3 : 0.5,
                       position: "relative",
-                      "&:hover": isValid
-                        ? {
-                            borderColor: "#667eea",
-                            backgroundColor: isChecked ? "#5a6fd8" : "#f5f5f5",
-                            transform: "scale(1.05)",
-                          }
-                        : {},
+                      "&:hover":
+                        isValid && isCreator
+                          ? {
+                              borderColor: "#667eea",
+                              backgroundColor: isChecked
+                                ? "#5a6fd8"
+                                : "#f5f5f5",
+                              transform: "scale(1.05)",
+                            }
+                          : {},
                     }}
                   >
                     <Box
