@@ -51,6 +51,10 @@ function ResetPassword() {
               event === "PASSWORD_RECOVERY" ||
               (event === "SIGNED_IN" && session)
             ) {
+              // Clear the hash from URL after session is established
+              if (window.location.hash) {
+                window.history.replaceState(null, "", window.location.pathname);
+              }
               setCheckingSession(false);
             }
           });
@@ -72,6 +76,10 @@ function ResetPassword() {
             }
 
             if (session) {
+              // Clear the hash from URL after session is established
+              if (window.location.hash) {
+                window.history.replaceState(null, "", window.location.pathname);
+              }
               setCheckingSession(false);
             } else {
               // Give it one more try after a longer delay

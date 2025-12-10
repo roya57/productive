@@ -14,14 +14,35 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [isRecoverySession, setIsRecoverySession] = useState(false);
 
   useEffect(() => {
+    // Check if current URL has recovery hash parameters
+    const checkRecoverySession = () => {
+      const hashParams = window.location.hash;
+      return (
+        hashParams.includes("type=recovery") ||
+        hashParams.includes("access_token")
+      );
+    };
+
     // Get initial session
     const getInitialSession = async () => {
       const {
         data: { session },
       } = await supabase.auth.getSession();
-      setUser(session?.user ?? null);
+
+      // Check if this is a recovery session
+      const isRecovery = checkRecoverySession();
+      setIsRecoverySession(isRecovery);
+
+      // Only set user if it's not a recovery session (recovery sessions are temporary)
+      // Recovery sessions should only allow access to reset-password page
+      if (session && !isRecovery) {
+        setUser(session.user);
+      } else {
+        setUser(null);
+      }
       setLoading(false);
     };
 
@@ -31,7 +52,18 @@ export const AuthProvider = ({ children }) => {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
-      setUser(session?.user ?? null);
+      const isRecovery = checkRecoverySession();
+      setIsRecoverySession(isRecovery);
+
+      // If it's a PASSWORD_RECOVERY event, mark as recovery session
+      if (event === "PASSWORD_RECOVERY") {
+        setIsRecoverySession(true);
+        setUser(null); // Don't treat recovery sessions as authenticated
+      } else if (session && !isRecovery) {
+        setUser(session.user);
+      } else {
+        setUser(null);
+      }
       setLoading(false);
     });
 
@@ -142,6 +174,7 @@ export const AuthProvider = ({ children }) => {
   const value = {
     user,
     loading,
+    isRecoverySession,
     signUp,
     signIn,
     signOut,
