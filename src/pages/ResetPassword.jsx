@@ -189,6 +189,9 @@ function ResetPassword() {
 
       setSuccess("Password reset successfully! Redirecting to sign in...");
 
+      // Clear the recovery session flag
+      sessionStorage.removeItem("isRecoverySession");
+
       // Sign out the user after password reset
       await supabase.auth.signOut();
 

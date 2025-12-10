@@ -17,13 +17,20 @@ export const AuthProvider = ({ children }) => {
   const [isRecoverySession, setIsRecoverySession] = useState(false);
 
   useEffect(() => {
-    // Check if current URL has recovery hash parameters
+    // Check if current URL has recovery hash parameters or if we have a stored recovery flag
     const checkRecoverySession = () => {
+      // Check URL hash first
       const hashParams = window.location.hash;
-      return (
+      if (
         hashParams.includes("type=recovery") ||
         hashParams.includes("access_token")
-      );
+      ) {
+        // Store flag in sessionStorage so it persists even after hash is cleared
+        sessionStorage.setItem("isRecoverySession", "true");
+        return true;
+      }
+      // Check stored flag (persists after hash is cleared)
+      return sessionStorage.getItem("isRecoverySession") === "true";
     };
 
     // Get initial session
@@ -57,6 +64,7 @@ export const AuthProvider = ({ children }) => {
 
       // If it's a PASSWORD_RECOVERY event, mark as recovery session
       if (event === "PASSWORD_RECOVERY") {
+        sessionStorage.setItem("isRecoverySession", "true");
         setIsRecoverySession(true);
         setUser(null); // Don't treat recovery sessions as authenticated
       } else if (session && !isRecovery) {
@@ -123,6 +131,8 @@ export const AuthProvider = ({ children }) => {
   // Sign out
   const signOut = async () => {
     try {
+      // Clear recovery session flag if it exists
+      sessionStorage.removeItem("isRecoverySession");
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
     } catch (error) {
