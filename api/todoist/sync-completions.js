@@ -45,28 +45,55 @@ export default async function handler(req, res) {
     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
 
+    // Todoist Sync API v9 uses GET requests with query parameters
+    // Format dates for since/until parameters (ISO 8601 format)
+    const sinceDate = startOfMonth.toISOString();
+    const untilDate = new Date(endOfMonth);
+    untilDate.setHours(23, 59, 59, 999); // End of day
+    const untilDateISO = untilDate.toISOString();
+
+    // Build query string
+    const params = new URLSearchParams({
+      object_type: "item",
+      event_type: "completed",
+      since: sinceDate,
+      until: untilDateISO,
+      limit: "100", // Maximum is 100 per request
+    });
+
     const response = await fetch(
-      "https://api.todoist.com/sync/v9/activity/get",
+      `https://api.todoist.com/sync/v9/activity/get?${params.toString()}`,
       {
-        method: "POST",
+        method: "GET",
         headers: {
           Authorization: `Bearer ${todoistToken}`,
-          "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          object_type: "item",
-          event_type: "completed",
-          limit: 500,
-        }),
       }
     );
 
     if (!response.ok) {
-      throw new Error(`Todoist API error: ${response.status}`);
+      const errorText = await response.text();
+      console.error("Todoist API error response:", {
+        status: response.status,
+        statusText: response.statusText,
+        body: errorText,
+      });
+      throw new Error(`Todoist API error: ${response.status} - ${errorText}`);
     }
 
-    const data = await response.json();
-    const events = data.events || [];
+    let data;
+    try {
+      data = await response.json();
+    } catch (jsonError) {
+      const text = await response.text();
+      console.error("Failed to parse Todoist response:", text);
+      throw new Error(
+        `Invalid JSON response from Todoist: ${text.substring(0, 200)}`
+      );
+    }
+
+    // Handle different response structures
+    const events = data.events || data.items || data || [];
 
     // Process events and prepare for database insertion
     const completions = [];
@@ -79,14 +106,30 @@ export default async function handler(req, res) {
     };
 
     events.forEach((event) => {
-      const taskId = event.object_id || event.item_id;
-      let eventDate = null;
+      // Handle different event structures
+      const taskId =
+        event.object_id || event.item_id || event.id || event.object.id;
+      if (!taskId) {
+        console.warn("Event missing task ID:", event);
+        return;
+      }
 
+      // Try multiple date fields
+      let eventDate = null;
       if (event.event_date) eventDate = new Date(event.event_date);
       else if (event.date_completed) eventDate = new Date(event.date_completed);
+      else if (event.completed_date) eventDate = new Date(event.completed_date);
       else if (event.created_at) eventDate = new Date(event.created_at);
+      else if (event.date) eventDate = new Date(event.date);
+      else if (event.event_date_utc) eventDate = new Date(event.event_date_utc);
 
-      if (eventDate && eventDate >= startOfMonth && eventDate <= endOfMonth) {
+      if (!eventDate || isNaN(eventDate.getTime())) {
+        console.warn("Event missing valid date:", event);
+        return;
+      }
+
+      // Filter by date range
+      if (eventDate >= startOfMonth && eventDate <= endOfMonth) {
         completions.push({
           user_id: userId,
           task_id: String(taskId),
