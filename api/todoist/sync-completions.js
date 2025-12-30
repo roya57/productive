@@ -23,11 +23,14 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { userId, todoistToken } = req.body;
+  const { userId, todoistToken, timezone } = req.body;
 
   if (!userId || !todoistToken) {
     return res.status(400).json({ error: "Missing userId or todoistToken" });
   }
+
+  // Use provided timezone or default to America/Los_Angeles (Pacific)
+  const userTimezone = timezone || "America/Los_Angeles";
 
   if (!supabaseUrl || !supabaseServiceKey) {
     console.error("Missing Supabase configuration:", {
@@ -97,14 +100,25 @@ export default async function handler(req, res) {
 
     // Process events and prepare for database insertion
     const completions = [];
-    const formatDate = (date) => {
-      // Use local date (not UTC) to match frontend formatDateKey behavior
+    const formatDate = (date, tz = userTimezone) => {
+      // Convert UTC date to user's local timezone
       const d = new Date(date);
-      d.setHours(0, 0, 0, 0); // Normalize to local midnight
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
-        2,
-        "0"
-      )}-${String(d.getDate()).padStart(2, "0")}`;
+
+      // Format the date in the user's timezone
+      // Use Intl.DateTimeFormat to get date components in the specified timezone
+      const formatter = new Intl.DateTimeFormat("en-US", {
+        timeZone: tz,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      });
+
+      const parts = formatter.formatToParts(d);
+      const year = parts.find((p) => p.type === "year").value;
+      const month = parts.find((p) => p.type === "month").value;
+      const day = parts.find((p) => p.type === "day").value;
+
+      return `${year}-${month}-${day}`;
     };
 
     events.forEach((event) => {
@@ -130,8 +144,8 @@ export default async function handler(req, res) {
         return;
       }
 
-      // Format the completion date (using local timezone)
-      const completionDateStr = formatDate(eventDate);
+      // Format the completion date (using user's timezone)
+      const completionDateStr = formatDate(eventDate, userTimezone);
 
       // Also create date objects for range comparison (using local timezone)
       const eventDateLocal = new Date(eventDate);

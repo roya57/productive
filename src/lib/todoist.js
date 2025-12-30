@@ -364,6 +364,9 @@ export const syncTodoistCompletions = async () => {
         ? "http://localhost:3000/api/todoist/sync-completions"
         : "/api/todoist/sync-completions";
 
+    // Get user's timezone
+    const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
     // Call backend sync endpoint
     const response = await fetch(apiUrl, {
       method: "POST",
@@ -373,6 +376,7 @@ export const syncTodoistCompletions = async () => {
       body: JSON.stringify({
         userId: user.id,
         todoistToken: token,
+        timezone: userTimezone, // Pass user's timezone to backend
       }),
     });
 
