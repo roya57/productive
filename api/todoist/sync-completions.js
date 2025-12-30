@@ -98,7 +98,9 @@ export default async function handler(req, res) {
     // Process events and prepare for database insertion
     const completions = [];
     const formatDate = (date) => {
+      // Use local date (not UTC) to match frontend formatDateKey behavior
       const d = new Date(date);
+      d.setHours(0, 0, 0, 0); // Normalize to local midnight
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
         2,
         "0"
@@ -114,26 +116,40 @@ export default async function handler(req, res) {
         return;
       }
 
-      // Try multiple date fields
+      // Try multiple date fields - prioritize completion-specific dates
       let eventDate = null;
-      if (event.event_date) eventDate = new Date(event.event_date);
-      else if (event.date_completed) eventDate = new Date(event.date_completed);
+      if (event.date_completed) eventDate = new Date(event.date_completed);
       else if (event.completed_date) eventDate = new Date(event.completed_date);
+      else if (event.event_date) eventDate = new Date(event.event_date);
+      else if (event.event_date_utc) eventDate = new Date(event.event_date_utc);
       else if (event.created_at) eventDate = new Date(event.created_at);
       else if (event.date) eventDate = new Date(event.date);
-      else if (event.event_date_utc) eventDate = new Date(event.event_date_utc);
 
       if (!eventDate || isNaN(eventDate.getTime())) {
         console.warn("Event missing valid date:", event);
         return;
       }
 
-      // Filter by date range
-      if (eventDate >= startOfMonth && eventDate <= endOfMonth) {
+      // Format the completion date (using local timezone)
+      const completionDateStr = formatDate(eventDate);
+
+      // Also create date objects for range comparison (using local timezone)
+      const eventDateLocal = new Date(eventDate);
+      eventDateLocal.setHours(0, 0, 0, 0);
+      const startOfMonthLocal = new Date(startOfMonth);
+      startOfMonthLocal.setHours(0, 0, 0, 0);
+      const endOfMonthLocal = new Date(endOfMonth);
+      endOfMonthLocal.setHours(23, 59, 59, 999);
+
+      // Filter by date range (compare local dates)
+      if (
+        eventDateLocal >= startOfMonthLocal &&
+        eventDateLocal <= endOfMonthLocal
+      ) {
         completions.push({
           user_id: userId,
           task_id: String(taskId),
-          completion_date: formatDate(eventDate),
+          completion_date: completionDateStr,
         });
       }
     });
