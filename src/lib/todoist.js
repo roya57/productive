@@ -333,3 +333,58 @@ export const getTodoistTaskCompletions = async (
     throw err;
   }
 };
+
+/**
+ * Trigger backend sync to fetch completions from Todoist and store in database
+ * This calls the serverless function which handles the Todoist API call (server-side)
+ * @returns {Promise<Object>} Result object with success status and number synced
+ */
+export const syncTodoistCompletions = async () => {
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      throw new Error("User must be authenticated");
+    }
+
+    // Get Todoist token (from localStorage for now, or could be from database)
+    const token = localStorage.getItem(`todoist_token_${user.id}`);
+    if (!token) {
+      throw new Error(
+        "Todoist not connected. Please connect to Todoist first."
+      );
+    }
+
+    // Determine the API endpoint URL
+    // In production, this will be your Vercel deployment URL
+    // For local development, use localhost if running vercel dev
+    const apiUrl =
+      import.meta.env.MODE === "development"
+        ? "http://localhost:3000/api/todoist/sync-completions"
+        : "/api/todoist/sync-completions";
+
+    // Call backend sync endpoint
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        userId: user.id,
+        todoistToken: token,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Sync failed: ${response.status} - ${errorText}`);
+    }
+
+    const result = await response.json();
+    return result;
+  } catch (err) {
+    console.error("Error syncing Todoist completions:", err);
+    throw err;
+  }
+};

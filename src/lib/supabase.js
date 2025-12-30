@@ -14,6 +14,16 @@ const supabaseKey =
 
 export const supabase = createClient(supabaseUrl, supabaseKey);
 
+// Helper function to format date as YYYY-MM-DD (local date, not UTC)
+const formatDateKey = (date) => {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+    2,
+    "0"
+  )}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
 // Helper function to create a new habit
 export const createHabit = async (
   habitData,
@@ -626,6 +636,63 @@ export const getUserHabitReactionByDate = async (habitId, reactionDate) => {
     return data;
   } catch (err) {
     console.error("Exception in getUserHabitReactionByDate:", err);
+    throw err;
+  }
+};
+export const getTodoistCompletionsFromDB = async (taskIds = []) => {
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      throw new Error("User must be authenticated");
+    }
+
+    // Get current month range
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+    const startDate = formatDateKey(startOfMonth);
+    const endDate = formatDateKey(endOfMonth);
+
+    let query = supabase
+      .from("todoist_completions")
+      .select("task_id, completion_date")
+      .eq("user_id", user.id)
+      .gte("completion_date", startDate)
+      .lte("completion_date", endDate);
+
+    if (taskIds.length > 0) {
+      query = query.in("task_id", taskIds.map(String));
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      throw error;
+    }
+
+    // Group by task_id
+    const completionsByTask = {};
+    data.forEach((completion) => {
+      if (!completionsByTask[completion.task_id]) {
+        completionsByTask[completion.task_id] = { dates: [] };
+      }
+      if (
+        !completionsByTask[completion.task_id].dates.includes(
+          completion.completion_date
+        )
+      ) {
+        completionsByTask[completion.task_id].dates.push(
+          completion.completion_date
+        );
+      }
+    });
+
+    return completionsByTask;
+  } catch (err) {
+    console.error("Error fetching todoist completions from database:", err);
     throw err;
   }
 };
