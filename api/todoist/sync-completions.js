@@ -1,8 +1,12 @@
 import { createClient } from "@supabase/supabase-js";
 
 // In Vercel serverless functions, use process.env (not import.meta.env)
-// Also check both VITE_SUPABASE_URL and SUPABASE_URL (Vercel might not have VITE_ prefix)
-const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+// Note: VITE_ prefixed vars are only available at build time, not runtime
+// Check both with and without VITE_ prefix
+const supabaseUrl =
+  process.env.SUPABASE_URL ||
+  process.env.VITE_SUPABASE_URL ||
+  "https://uwwsqjdvhtgfyehusbos.supabase.co"; // Fallback for testing
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY; // Service role key (not anon key)
 
 export default async function handler(req, res) {
@@ -30,11 +34,9 @@ export default async function handler(req, res) {
       hasUrl: !!supabaseUrl,
       hasKey: !!supabaseServiceKey,
     });
-    return res
-      .status(500)
-      .json({
-        error: "Server configuration error: Missing Supabase credentials",
-      });
+    return res.status(500).json({
+      error: "Server configuration error: Missing Supabase credentials",
+    });
   }
 
   try {
