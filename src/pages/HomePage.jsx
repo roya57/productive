@@ -39,8 +39,9 @@ import {
   getTodoistProjects,
   getTodoistTasksByProject,
   getTodoistLabels,
-  getTodoistTaskCompletions,
+  syncTodoistCompletions,
 } from "../lib/todoist";
+import { getTodoistCompletionsFromDB } from "../lib/supabase";
 
 function HomePage() {
   const navigate = useNavigate();
@@ -128,17 +129,29 @@ function HomePage() {
 
               setTodoistTasks(filteredTasks);
 
-              // Fetch completion data for these tasks
-              // Note: This may fail due to CORS restrictions - the Sync API requires server-side access
+              // Fetch completion data from database (synced by backend)
               if (filteredTasks.length > 0) {
                 try {
                   const taskIds = filteredTasks.map((task) => String(task.id));
-                  const completions = await getTodoistTaskCompletions(taskIds);
+                  // First try to sync (trigger backend to fetch from Todoist)
+                  try {
+                    await syncTodoistCompletions();
+                  } catch (syncErr) {
+                    // If sync fails, still try to load existing data from database
+                    console.warn(
+                      "Sync failed, loading existing data:",
+                      syncErr
+                    );
+                  }
+                  // Then fetch from database
+                  const completions = await getTodoistCompletionsFromDB(
+                    taskIds
+                  );
                   setTodoistCompletions(completions);
                 } catch (err) {
                   console.error("Error loading Todoist completions:", err);
                   // Don't set error state for completion loading failures
-                  // This is expected if CORS blocks the request - just continue with empty completions
+                  // Just continue with empty completions
                   setTodoistCompletions({});
                 }
               } else {
