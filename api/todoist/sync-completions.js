@@ -1,9 +1,20 @@
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.VITE_SUPABASE_URL;
+// In Vercel serverless functions, use process.env (not import.meta.env)
+// Also check both VITE_SUPABASE_URL and SUPABASE_URL (Vercel might not have VITE_ prefix)
+const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY; // Service role key (not anon key)
 
 export default async function handler(req, res) {
+  // Enable CORS for all origins (since this is called from browser)
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  // Handle preflight
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
@@ -12,6 +23,18 @@ export default async function handler(req, res) {
 
   if (!userId || !todoistToken) {
     return res.status(400).json({ error: "Missing userId or todoistToken" });
+  }
+
+  if (!supabaseUrl || !supabaseServiceKey) {
+    console.error("Missing Supabase configuration:", {
+      hasUrl: !!supabaseUrl,
+      hasKey: !!supabaseServiceKey,
+    });
+    return res
+      .status(500)
+      .json({
+        error: "Server configuration error: Missing Supabase credentials",
+      });
   }
 
   try {
@@ -91,6 +114,14 @@ export default async function handler(req, res) {
     });
   } catch (error) {
     console.error("Error syncing Todoist completions:", error);
-    return res.status(500).json({ error: error.message });
+    console.error("Error details:", {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+    });
+    return res.status(500).json({
+      error: error.message || "Internal server error",
+      details: process.env.NODE_ENV === "development" ? error.stack : undefined,
+    });
   }
 }
