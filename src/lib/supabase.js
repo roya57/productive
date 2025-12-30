@@ -15,13 +15,18 @@ const supabaseKey =
 export const supabase = createClient(supabaseUrl, supabaseKey);
 
 // Helper function to create a new habit
-export const createHabit = async (habitData, userId = null) => {
+export const createHabit = async (
+  habitData,
+  userId = null,
+  creatorName = null
+) => {
   try {
     // Prepare habit_data JSONB with habit info and user_id
     const habitDataJson = {
       name: habitData.name,
       frequency: habitData.frequency,
       ...(userId && { user_id: userId }),
+      ...(creatorName && { creator_name: creatorName }),
     };
 
     // Insert habit into habits table
@@ -451,6 +456,176 @@ export const updateHabitBooks = async (habitId, books) => {
     return data[0];
   } catch (err) {
     console.error("Exception in updateHabitBooks:", err);
+    throw err;
+  }
+};
+
+// Helper function to add or update a reaction for a habit on a specific date
+// reaction should be 'clap' or 'eyes'
+export const upsertHabitReaction = async (habitId, reactionDate, reaction) => {
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      throw new Error("User must be authenticated to add reactions");
+    }
+
+    // Use upsert to insert or update
+    const { data, error } = await supabase
+      .from("habit_reactions")
+      .upsert(
+        {
+          habit_id: habitId,
+          reactor_id: user.id,
+          reaction_date: reactionDate, // Format: YYYY-MM-DD
+          reaction: reaction, // 'clap' or 'eyes'
+        },
+        {
+          onConflict: "habit_id,reactor_id,reaction_date",
+        }
+      )
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Error upserting habit reaction:", error);
+      throw error;
+    }
+
+    return data;
+  } catch (err) {
+    console.error("Exception in upsertHabitReaction:", err);
+    throw err;
+  }
+};
+
+// Helper function to remove a reaction for a habit on a specific date
+export const removeHabitReaction = async (habitId, reactionDate) => {
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      throw new Error("User must be authenticated to remove reactions");
+    }
+
+    const { error } = await supabase
+      .from("habit_reactions")
+      .delete()
+      .eq("habit_id", habitId)
+      .eq("reactor_id", user.id)
+      .eq("reaction_date", reactionDate);
+
+    if (error) {
+      console.error("Error removing habit reaction:", error);
+      throw error;
+    }
+
+    return true;
+  } catch (err) {
+    console.error("Exception in removeHabitReaction:", err);
+    throw err;
+  }
+};
+
+// Helper function to get reactions for a habit on a specific date (for creators)
+export const getHabitReactionsByDate = async (habitId, reactionDate) => {
+  try {
+    const { data, error } = await supabase
+      .from("habit_reactions")
+      .select("reactor_id, reaction, created_at, updated_at")
+      .eq("habit_id", habitId)
+      .eq("reaction_date", reactionDate);
+
+    if (error) {
+      console.error("Error fetching habit reactions by date:", error);
+      throw error;
+    }
+
+    return data || [];
+  } catch (err) {
+    console.error("Exception in getHabitReactionsByDate:", err);
+    throw err;
+  }
+};
+
+// Helper function to get all reactions for a habit (for creators)
+export const getAllHabitReactions = async (habitId) => {
+  try {
+    const { data, error } = await supabase
+      .from("habit_reactions")
+      .select("reactor_id, reaction_date, reaction, created_at, updated_at")
+      .eq("habit_id", habitId)
+      .order("reaction_date", { ascending: false });
+
+    if (error) {
+      console.error("Error fetching all habit reactions:", error);
+      throw error;
+    }
+
+    return data || [];
+  } catch (err) {
+    console.error("Exception in getAllHabitReactions:", err);
+    throw err;
+  }
+};
+
+// Helper function to get user's reactions for a habit (for trackers)
+export const getUserHabitReactions = async (habitId) => {
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      throw new Error("User must be authenticated");
+    }
+
+    const { data, error } = await supabase
+      .from("habit_reactions")
+      .select("reaction_date, reaction, created_at, updated_at")
+      .eq("habit_id", habitId)
+      .eq("reactor_id", user.id)
+      .order("reaction_date", { ascending: false });
+
+    if (error) {
+      console.error("Error fetching user habit reactions:", error);
+      throw error;
+    }
+
+    return data || [];
+  } catch (err) {
+    console.error("Exception in getUserHabitReactions:", err);
+    throw err;
+  }
+};
+
+// Helper function to get user's reaction for a habit on a specific date
+export const getUserHabitReactionByDate = async (habitId, reactionDate) => {
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      throw new Error("User must be authenticated");
+    }
+
+    const { data, error } = await supabase
+      .from("habit_reactions")
+      .select("reaction")
+      .eq("habit_id", habitId)
+      .eq("reactor_id", user.id)
+      .eq("reaction_date", reactionDate)
+      .maybeSingle();
+
+    if (error) {
+      console.error("Error fetching user habit reaction by date:", error);
+      throw error;
+    }
+
+    return data;
+  } catch (err) {
+    console.error("Exception in getUserHabitReactionByDate:", err);
     throw err;
   }
 };

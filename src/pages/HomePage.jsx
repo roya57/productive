@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Box,
   Container,
@@ -19,17 +19,32 @@ import {
   TextField,
   Tabs,
   Tab,
+  IconButton,
+  Popover,
+  Paper,
 } from "@mui/material";
+import { AddReaction } from "@mui/icons-material";
 import HamburgerMenu from "../components/HamburgerMenu";
 import { useAuth } from "../contexts/AuthContext";
 import {
   getUserHabitsByType,
   updateHabitCheckedDays,
   updateHabitReadingData,
+  upsertHabitReaction,
+  removeHabitReaction,
+  getUserHabitReactionByDate,
+  getAllHabitReactions,
 } from "../lib/supabase";
+import {
+  getTodoistProjects,
+  getTodoistTasksByProject,
+  getTodoistLabels,
+  getTodoistTaskCompletions,
+} from "../lib/todoist";
 
 function HomePage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
   const { user } = useAuth();
@@ -37,6 +52,116 @@ function HomePage() {
   const [habits, setHabits] = useState({ created: [], tracked: [] });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [emojiPickerAnchor, setEmojiPickerAnchor] = useState(null);
+  const [selectedHabitId, setSelectedHabitId] = useState(null);
+  const [habitReactions, setHabitReactions] = useState({}); // { habitId: { date: reaction } } - for trackers
+  const [receivedReactions, setReceivedReactions] = useState({}); // { habitId: reactions[] } - for creators
+  const [todoistConnected, setTodoistConnected] = useState(false);
+  const [todoistLoading, setTodoistLoading] = useState(false);
+  const [todoistTasks, setTodoistTasks] = useState([]);
+  // Store task completions: { taskId: { dates: ['2024-01-15', '2024-01-16', ...] } }
+  const [todoistCompletions, setTodoistCompletions] = useState({});
+
+  // Helper function to format date as YYYY-MM-DD (local date, not UTC)
+  const formatDateKey = (date) => {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+      2,
+      "0"
+    )}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+
+  // Check Todoist connection status on mount and after callback, and load tasks
+  useEffect(() => {
+    const loadTodoistData = async () => {
+      if (user?.id) {
+        const todoistToken = localStorage.getItem(`todoist_token_${user.id}`);
+        const isConnected = !!todoistToken;
+        setTodoistConnected(isConnected);
+
+        // Check if we just connected (from callback redirect)
+        if (searchParams.get("todoist_connected") === "true") {
+          // Clear the query parameter
+          navigate("/", { replace: true });
+          // Show success message (you can customize this)
+          setError(null); // Clear any previous errors
+        }
+
+        // Load tasks if connected
+        if (isConnected) {
+          try {
+            setTodoistLoading(true);
+            // Get all projects and labels
+            const [projects, labels] = await Promise.all([
+              getTodoistProjects(),
+              getTodoistLabels(),
+            ]);
+
+            // Find the "Routines" project
+            const routinesProject = projects.find(
+              (project) => project.name === "Routines"
+            );
+
+            // Find the "track" label
+            const trackLabel = labels.find((label) => label.name === "track");
+
+            if (routinesProject) {
+              // Get tasks from the Routines project
+              const tasks = await getTodoistTasksByProject(routinesProject.id);
+
+              // Filter tasks that have the "track" label
+              const filteredTasks = tasks.filter((task) => {
+                // Tasks typically have label_ids array containing label IDs
+                if (task.label_ids && Array.isArray(task.label_ids)) {
+                  // If we found the track label, check if this task has its ID
+                  if (trackLabel) {
+                    return task.label_ids.includes(trackLabel.id);
+                  }
+                }
+                // Fallback: check if task has labels property with names
+                if (task.labels && Array.isArray(task.labels)) {
+                  return task.labels.includes("track");
+                }
+                return false;
+              });
+
+              setTodoistTasks(filteredTasks);
+
+              // Fetch completion data for these tasks
+              // Note: This may fail due to CORS restrictions - the Sync API requires server-side access
+              if (filteredTasks.length > 0) {
+                try {
+                  const taskIds = filteredTasks.map((task) => String(task.id));
+                  const completions = await getTodoistTaskCompletions(taskIds);
+                  setTodoistCompletions(completions);
+                } catch (err) {
+                  console.error("Error loading Todoist completions:", err);
+                  // Don't set error state for completion loading failures
+                  // This is expected if CORS blocks the request - just continue with empty completions
+                  setTodoistCompletions({});
+                }
+              } else {
+                setTodoistCompletions({});
+              }
+            } else {
+              setTodoistTasks([]);
+              setTodoistCompletions({});
+            }
+          } catch (err) {
+            console.error("Error loading Todoist tasks:", err);
+            setError(`Failed to load Todoist tasks: ${err.message}`);
+            setTodoistTasks([]);
+            setTodoistCompletions({});
+          } finally {
+            setTodoistLoading(false);
+          }
+        }
+      }
+    };
+
+    loadTodoistData();
+  }, [user?.id, searchParams, navigate]);
 
   useEffect(() => {
     const loadHabits = async () => {
@@ -46,6 +171,47 @@ function HomePage() {
           setError(null);
           const userHabits = await getUserHabitsByType(user.id);
           setHabits(userHabits);
+
+          // Load reactions for tracked habits (for today)
+          const todayKey = formatDateKey(new Date());
+
+          const reactionsMap = {};
+          for (const habit of userHabits.tracked) {
+            try {
+              const reaction = await getUserHabitReactionByDate(
+                habit.habit_id,
+                todayKey
+              );
+              if (reaction && reaction.reaction) {
+                reactionsMap[habit.habit_id] = {
+                  [todayKey]: reaction.reaction,
+                };
+              }
+            } catch (err) {
+              console.error(
+                `Error loading reaction for habit ${habit.habit_id}:`,
+                err
+              );
+            }
+          }
+          setHabitReactions(reactionsMap);
+
+          // Load received reactions for created habits (all reactions from others)
+          const receivedReactionsMap = {};
+          for (const habit of userHabits.created) {
+            try {
+              const reactions = await getAllHabitReactions(habit.habit_id);
+              if (reactions && reactions.length > 0) {
+                receivedReactionsMap[habit.habit_id] = reactions;
+              }
+            } catch (err) {
+              console.error(
+                `Error loading received reactions for habit ${habit.habit_id}:`,
+                err
+              );
+            }
+          }
+          setReceivedReactions(receivedReactionsMap);
         } catch (err) {
           console.error("Error loading habits:", err);
           setError("Failed to load your habits. Please try again.");
@@ -54,6 +220,7 @@ function HomePage() {
         }
       } else {
         setHabits({ created: [], tracked: [] });
+        setHabitReactions({});
       }
     };
 
@@ -62,6 +229,25 @@ function HomePage() {
 
   const handleTabChange = (event, newValue) => {
     setActiveTab(newValue);
+  };
+
+  // Handle Todoist connection
+  const handleConnectTodoist = () => {
+    const clientId = import.meta.env.VITE_TODOIST_CLIENT_ID || "";
+    // Redirect URI must match what's configured in Todoist App Management Console
+    const redirectUri = `${window.location.origin}/todoist/callback`;
+    const state = user?.id || "state"; // Use user ID as state for CSRF protection
+    const scope = "data:read";
+
+    if (!clientId) {
+      setError("Todoist Client ID not configured. Please contact support.");
+      return;
+    }
+
+    const authUrl = `https://todoist.com/oauth/authorize?client_id=${clientId}&scope=${scope}&state=${state}&redirect_uri=${encodeURIComponent(
+      redirectUri
+    )}`;
+    window.location.href = authUrl;
   };
 
   const handleHabitClick = (habit) => {
@@ -383,6 +569,94 @@ function HomePage() {
     );
   };
 
+  // Mini Calendar component for tracked habits
+  const MiniCalendar = ({ habit }) => {
+    const isReading = habit.habit_data?.frequency === "reading";
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Get the last 35 days (5 weeks x 7 days)
+    const days = [];
+    for (let i = 34; i >= 0; i--) {
+      const date = new Date(today);
+      date.setDate(today.getDate() - i);
+      date.setHours(0, 0, 0, 0);
+      days.push(date);
+    }
+
+    // Check if a day has habit data
+    const isDayDone = (date) => {
+      const dateKey = date.toISOString().split("T")[0];
+      const creationDate = new Date(habit.created_at);
+      creationDate.setHours(0, 0, 0, 0);
+
+      // Don't show days before creation
+      if (date < creationDate) {
+        return null; // null means don't show (before creation)
+      }
+
+      if (isReading) {
+        const readingData = habit.habit_data?.readingData || {};
+        const dayReadingData = readingData[dateKey];
+        if (!dayReadingData) return false;
+
+        // Handle different data formats
+        if (typeof dayReadingData === "number") {
+          return dayReadingData > 0;
+        } else if (Array.isArray(dayReadingData)) {
+          return dayReadingData.some((entry) => {
+            return (
+              (entry.pagesRead && entry.pagesRead > 0) ||
+              (entry.value && entry.value > 0)
+            );
+          });
+        } else if (dayReadingData.value) {
+          return (
+            (dayReadingData.pagesRead && dayReadingData.pagesRead > 0) ||
+            (dayReadingData.value && dayReadingData.value > 0)
+          );
+        }
+        return false;
+      } else {
+        const checkedDays = habit.habit_data?.checkedDays || [];
+        return checkedDays.includes(dateKey);
+      }
+    };
+
+    return (
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: "repeat(7, 1fr)",
+          gap: 0.3,
+          width: "fit-content",
+        }}
+      >
+        {days.map((day, index) => {
+          const done = isDayDone(day);
+          return (
+            <Box
+              key={index}
+              sx={{
+                width: 10,
+                height: 10,
+                borderRadius: "1px",
+                backgroundColor:
+                  done === null ? "transparent" : done ? "#667eea" : "#e2e8f0",
+                border: done === null ? "none" : "1px solid #f0f0f0",
+              }}
+              title={
+                done === null
+                  ? ""
+                  : day.toLocaleDateString() + (done ? " ✓" : " ✗")
+              }
+            />
+          );
+        })}
+      </Box>
+    );
+  };
+
   // Render habit list
   const renderHabitList = (habitList, emptyMessage, isTracked = false) => {
     if (loading) {
@@ -430,163 +704,352 @@ function HomePage() {
                   },
                 }}
               >
-                {/* Stats Section */}
-                <Box
-                  sx={{
-                    display: "flex",
-                    gap: 2,
-                    mr: 2,
-                    alignItems: "flex-start",
-                  }}
-                >
-                  {/* Streak */}
+                {isTracked ? (
+                  // Grid layout for tracked habits
                   <Box
                     sx={{
-                      display: "flex",
-                      flexDirection: "column",
+                      display: "grid",
+                      gridTemplateColumns: "auto 1fr auto",
                       alignItems: "center",
-                      minWidth: 50,
+                      gap: 2,
+                      width: "100%",
                     }}
                   >
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{
-                        mb: 0.5,
-                        fontSize: "0.7rem",
-                        height: "1.2rem",
-                        display: "flex",
-                        alignItems: "center",
-                      }}
-                    >
-                      Streak
-                    </Typography>
-                    <Typography
-                      variant="h6"
-                      className="app-text-primary"
-                      fontWeight={700}
-                    >
-                      {streak}
-                    </Typography>
-                  </Box>
-
-                  {/* Completion Circle */}
-                  <Box
-                    sx={{
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "center",
-                      minWidth: 70,
-                    }}
-                  >
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{
-                        mb: 0.5,
-                        fontSize: "0.7rem",
-                        height: "1.2rem",
-                        display: "flex",
-                        alignItems: "center",
-                      }}
-                    >
-                      Completion
-                    </Typography>
-                    <CircularProgressWithLabel
-                      value={completionRate}
-                      size={50}
+                    {/* Habit Info - First Column */}
+                    <ListItemText
+                      primary={
+                        <Typography
+                          variant="subtitle1"
+                          fontWeight="medium"
+                          className="app-text-primary"
+                        >
+                          {habit.habit_data?.name || "Untitled Habit"}
+                        </Typography>
+                      }
+                      secondary={
+                        !isMobile ? (
+                          <>
+                            Frequency: {habit.habit_data?.frequency || "daily"}
+                            {habit.habit_data?.user_id && (
+                              <>
+                                {"\n"}
+                                Created by:{" "}
+                                {habit.habit_data?.creator_name ||
+                                  "Unknown User"}
+                              </>
+                            )}
+                            {"\n"}
+                            Created: {formatDate(habit.created_at)}
+                          </>
+                        ) : null
+                      }
                     />
-                  </Box>
-                </Box>
 
-                {/* Habit Info */}
-                <ListItemText
-                  primary={
-                    <Typography
-                      variant="subtitle1"
-                      fontWeight="medium"
-                      className="app-text-primary"
+                    {/* Mini Calendar - Second Column (Centered) */}
+                    <Box
+                      sx={{
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
                     >
-                      {habit.habit_data?.name || "Untitled Habit"}
-                    </Typography>
-                  }
-                  secondary={
-                    <Box>
-                      <Typography variant="body2" color="text.secondary">
-                        Frequency: {habit.habit_data?.frequency || "daily"}
-                      </Typography>
                       <Typography
                         variant="caption"
                         color="text.secondary"
-                        sx={{ display: "block", mt: 0.5 }}
-                      >
-                        Created: {formatDate(habit.created_at)}
-                      </Typography>
-                    </Box>
-                  }
-                />
-
-                {/* Today - Checkbox for both daily and reading habits */}
-                {!isTracked && (
-                  <Box
-                    sx={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 1,
-                      ml: 2,
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (isReading) {
-                        // For reading habits, navigate to tracker
-                        handleHabitClick(habit);
-                      }
-                    }}
-                  >
-                    <Typography
-                      variant="body2"
-                      color="text.secondary"
-                      sx={{ fontSize: "0.875rem" }}
-                    >
-                      Today
-                    </Typography>
-                    {isReading ? (
-                      <Checkbox
-                        checked={isTodayReadingChecked(habit)}
-                        onChange={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
+                        sx={{
+                          mb: 0.5,
+                          fontSize: "0.7rem",
+                          height: "1.2rem",
+                          display: "flex",
+                          alignItems: "center",
                         }}
+                      >
+                        Last 35 days
+                      </Typography>
+                      <MiniCalendar habit={habit} />
+                    </Box>
+
+                    {/* Emoji Button - Third Column */}
+                    <Box sx={{ position: "relative" }}>
+                      <IconButton
+                        size="small"
                         onClick={(e) => {
                           e.stopPropagation();
+                          setEmojiPickerAnchor(e.currentTarget);
+                          setSelectedHabitId(habit.habit_id);
+                        }}
+                        sx={{
+                          padding: 1.5,
+                          "&:hover": {
+                            backgroundColor: "rgba(102, 126, 234, 0.1)",
+                          },
+                        }}
+                      >
+                        {(() => {
+                          const todayKey = formatDateKey(new Date());
+                          const todayReaction =
+                            habitReactions[habit.habit_id]?.[todayKey];
+                          const emojiMap = { clap: "👏", eyes: "👀" };
+                          return todayReaction ? (
+                            <Typography sx={{ fontSize: "1.2rem" }}>
+                              {emojiMap[todayReaction]}
+                            </Typography>
+                          ) : (
+                            <AddReaction
+                              fontSize="small"
+                              sx={{ color: "#667eea" }}
+                            />
+                          );
+                        })()}
+                      </IconButton>
+                    </Box>
+                  </Box>
+                ) : (
+                  // Grid layout for created habits
+                  <Box
+                    sx={{
+                      display: "grid",
+                      gridTemplateColumns: "auto auto auto auto auto",
+                      alignItems: "center",
+                      gap: 2,
+                      width: "100%",
+                    }}
+                  >
+                    {/* Habit Info - First Column */}
+                    <ListItemText
+                      primary={
+                        <Typography
+                          variant="subtitle1"
+                          fontWeight="medium"
+                          className="app-text-primary"
+                        >
+                          {habit.habit_data?.name || "Untitled Habit"}
+                        </Typography>
+                      }
+                      secondary={
+                        !isMobile ? (
+                          <>
+                            Frequency: {habit.habit_data?.frequency || "daily"}
+                            {"\n"}
+                            Created: {formatDate(habit.created_at)}
+                          </>
+                        ) : null
+                      }
+                    />
+
+                    {/* Streak - Second Column */}
+                    <Box
+                      sx={{
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                      }}
+                    >
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{
+                          mb: 0.5,
+                          fontSize: "0.7rem",
+                          height: "1.2rem",
+                          display: "flex",
+                          alignItems: "center",
+                        }}
+                      >
+                        Streak
+                      </Typography>
+                      <Typography
+                        variant="h6"
+                        className="app-text-primary"
+                        fontWeight={700}
+                      >
+                        {streak}
+                      </Typography>
+                    </Box>
+
+                    {/* Completion Circle - Third Column */}
+                    <Box
+                      sx={{
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                      }}
+                    >
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{
+                          mb: 0.5,
+                          fontSize: "0.7rem",
+                          height: "1.2rem",
+                          display: "flex",
+                          alignItems: "center",
+                        }}
+                      >
+                        Completion
+                      </Typography>
+                      <CircularProgressWithLabel
+                        value={completionRate}
+                        size={50}
+                      />
+                    </Box>
+
+                    {/* Today - Checkbox - Fourth Column */}
+                    <Box
+                      sx={{
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        gap: 0.5,
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (isReading) {
+                          // For reading habits, navigate to tracker
                           handleHabitClick(habit);
-                        }}
-                        sx={{
-                          color: "#667eea",
-                          "&.Mui-checked": {
+                        }
+                      }}
+                    >
+                      <Typography
+                        variant="body2"
+                        color="text.secondary"
+                        sx={{ fontSize: "0.875rem" }}
+                      >
+                        Today
+                      </Typography>
+                      {isReading ? (
+                        <Checkbox
+                          checked={isTodayReadingChecked(habit)}
+                          onChange={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                          }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleHabitClick(habit);
+                          }}
+                          sx={{
                             color: "#667eea",
-                          },
-                          cursor: "pointer",
-                          "&:hover": {
-                            backgroundColor: "rgba(102, 126, 234, 0.08)",
-                          },
-                        }}
-                      />
-                    ) : (
-                      <Checkbox
-                        checked={isTodayChecked(habit)}
-                        onChange={(e) => handleTodayToggle(habit, e)}
-                        sx={{
-                          color: "#667eea",
-                          "&.Mui-checked": {
+                            "&.Mui-checked": {
+                              color: "#667eea",
+                            },
+                            cursor: "pointer",
+                            "&:hover": {
+                              backgroundColor: "rgba(102, 126, 234, 0.08)",
+                            },
+                          }}
+                        />
+                      ) : (
+                        <Checkbox
+                          checked={isTodayChecked(habit)}
+                          onChange={(e) => handleTodayToggle(habit, e)}
+                          sx={{
                             color: "#667eea",
-                          },
-                          "&:hover": {
-                            backgroundColor: "rgba(102, 126, 234, 0.08)",
-                          },
+                            "&.Mui-checked": {
+                              color: "#667eea",
+                            },
+                            "&:hover": {
+                              backgroundColor: "rgba(102, 126, 234, 0.08)",
+                            },
+                          }}
+                        />
+                      )}
+                    </Box>
+
+                    {/* Reactions Received - Fifth Column (for creators) */}
+                    <Box
+                      sx={{
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        gap: 0.5,
+                      }}
+                    >
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{
+                          fontSize: "0.7rem",
+                          height: "1.2rem",
+                          display: "flex",
+                          alignItems: "center",
                         }}
-                      />
-                    )}
+                      >
+                        Reactions
+                      </Typography>
+                      {(() => {
+                        const reactions =
+                          receivedReactions[habit.habit_id] || [];
+                        const todayKey = formatDateKey(new Date());
+                        const todayReactions = reactions.filter(
+                          (r) => r.reaction_date === todayKey
+                        );
+                        const emojiMap = { clap: "👏", eyes: "👀" };
+
+                        if (todayReactions.length > 0) {
+                          // Count reactions by type
+                          const reactionCounts = todayReactions.reduce(
+                            (acc, reaction) => {
+                              acc[reaction.reaction] =
+                                (acc[reaction.reaction] || 0) + 1;
+                              return acc;
+                            },
+                            {}
+                          );
+
+                          return (
+                            <Box
+                              sx={{
+                                display: "flex",
+                                gap: 0.75,
+                                alignItems: "center",
+                                flexWrap: "wrap",
+                                justifyContent: "center",
+                              }}
+                            >
+                              {Object.entries(reactionCounts).map(
+                                ([reactionType, count]) => (
+                                  <Box
+                                    key={reactionType}
+                                    sx={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 0.25,
+                                    }}
+                                  >
+                                    <Typography sx={{ fontSize: "1rem" }}>
+                                      {emojiMap[reactionType]}
+                                    </Typography>
+                                    <Typography
+                                      variant="caption"
+                                      sx={{
+                                        fontSize: "0.7rem",
+                                        fontWeight: 600,
+                                      }}
+                                    >
+                                      {count}
+                                    </Typography>
+                                  </Box>
+                                )
+                              )}
+                            </Box>
+                          );
+                        } else {
+                          return (
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                              sx={{ fontSize: "0.75rem" }}
+                            >
+                              {reactions.length > 0
+                                ? `${reactions.length} total`
+                                : "None"}
+                            </Typography>
+                          );
+                        }
+                      })()}
+                    </Box>
                   </Box>
                 )}
               </ListItemButton>
@@ -595,6 +1058,72 @@ function HomePage() {
         })}
       </List>
     );
+  };
+
+  // Handle emoji selection (for today's date)
+  const handleEmojiSelect = async (reaction) => {
+    if (!selectedHabitId) return;
+
+    try {
+      const todayKey = formatDateKey(new Date());
+
+      // Convert emoji to reaction type
+      const reactionMap = { "👏": "clap", "👀": "eyes" };
+      const reactionType = reactionMap[reaction] || reaction;
+
+      if (reactionType === "clap" || reactionType === "eyes") {
+        // Upsert reaction in database
+        await upsertHabitReaction(selectedHabitId, todayKey, reactionType);
+
+        // Update local state
+        setHabitReactions((prev) => ({
+          ...prev,
+          [selectedHabitId]: {
+            ...(prev[selectedHabitId] || {}),
+            [todayKey]: reactionType,
+          },
+        }));
+      }
+    } catch (err) {
+      console.error("Error saving reaction:", err);
+      setError("Failed to save reaction. Please try again.");
+    } finally {
+      setEmojiPickerAnchor(null);
+      setSelectedHabitId(null);
+    }
+  };
+
+  // Handle removing reaction
+  const handleRemoveReaction = async () => {
+    if (!selectedHabitId) return;
+
+    try {
+      const todayKey = formatDateKey(new Date());
+
+      // Remove reaction from database
+      await removeHabitReaction(selectedHabitId, todayKey);
+
+      // Update local state
+      setHabitReactions((prev) => {
+        const updated = { ...prev };
+        if (updated[selectedHabitId]) {
+          const habitReactions = { ...updated[selectedHabitId] };
+          delete habitReactions[todayKey];
+          if (Object.keys(habitReactions).length === 0) {
+            delete updated[selectedHabitId];
+          } else {
+            updated[selectedHabitId] = habitReactions;
+          }
+        }
+        return updated;
+      });
+    } catch (err) {
+      console.error("Error removing reaction:", err);
+      setError("Failed to remove reaction. Please try again.");
+    } finally {
+      setEmojiPickerAnchor(null);
+      setSelectedHabitId(null);
+    }
   };
 
   return (
@@ -694,6 +1223,11 @@ function HomePage() {
                           id="tracked-tab"
                           aria-controls="tracked-panel"
                         />
+                        <Tab
+                          label="Todoist"
+                          id="todoist-tab"
+                          aria-controls="todoist-panel"
+                        />
                       </Tabs>
                     </Box>
 
@@ -720,6 +1254,168 @@ function HomePage() {
                         habits.tracked,
                         "You haven't tracked any habits yet. Browse habits to get started!",
                         true
+                      )}
+                    </Box>
+
+                    <Box
+                      role="tabpanel"
+                      hidden={activeTab !== 2}
+                      id="todoist-panel"
+                      aria-labelledby="todoist-tab"
+                    >
+                      {!todoistConnected ? (
+                        <Box
+                          sx={{
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            py: 8,
+                          }}
+                        >
+                          <Typography
+                            variant="h6"
+                            sx={{ mb: 3, color: "text.secondary" }}
+                          >
+                            Connect to Todoist to view your completed tasks
+                          </Typography>
+                          <Button
+                            variant="contained"
+                            size="large"
+                            onClick={handleConnectTodoist}
+                            disabled={todoistLoading}
+                            sx={{
+                              px: 4,
+                              py: 1.5,
+                              fontSize: "1rem",
+                              borderRadius: "8px",
+                              textTransform: "none",
+                              fontWeight: 600,
+                              background:
+                                "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                              "&:hover": {
+                                background:
+                                  "linear-gradient(135deg, #5568d3 0%, #6a4190 100%)",
+                              },
+                            }}
+                          >
+                            Connect to Todoist
+                          </Button>
+                        </Box>
+                      ) : (
+                        <Box sx={{ py: 2 }}>
+                          {todoistLoading ? (
+                            <Box
+                              sx={{
+                                display: "flex",
+                                justifyContent: "center",
+                                alignItems: "center",
+                                py: 4,
+                              }}
+                            >
+                              <CircularProgress />
+                              <Typography variant="body2" sx={{ ml: 2 }}>
+                                Loading tasks...
+                              </Typography>
+                            </Box>
+                          ) : todoistTasks.length > 0 ? (
+                            <Box>
+                              <List>
+                                {todoistTasks.map((task) => {
+                                  // Get number of days in current month
+                                  const now = new Date();
+                                  const currentYear = now.getFullYear();
+                                  const currentMonth = now.getMonth();
+                                  const daysInMonth = new Date(
+                                    currentYear,
+                                    currentMonth + 1,
+                                    0
+                                  ).getDate();
+
+                                  const currentDay = now.getDate();
+
+                                  // Get completion dates for this task
+                                  const taskCompletions = todoistCompletions[
+                                    task.id
+                                  ] || { dates: [] };
+                                  const completionDates =
+                                    taskCompletions.dates || [];
+
+                                  return (
+                                    <ListItem
+                                      key={task.id}
+                                      sx={{
+                                        flexDirection: "column",
+                                        alignItems: "flex-start",
+                                      }}
+                                    >
+                                      <ListItemText
+                                        primary={task.content}
+                                        {...(task.description && {
+                                          secondary: task.description,
+                                        })}
+                                      />
+                                      <Box
+                                        sx={{
+                                          display: "flex",
+                                          gap: 0.5,
+                                          mt: 1,
+                                          flexWrap: "wrap",
+                                        }}
+                                      >
+                                        {Array.from(
+                                          { length: daysInMonth },
+                                          (_, i) => i + 1
+                                        ).map((day) => {
+                                          const isFutureDay = day > currentDay;
+
+                                          // Check if task was completed on this day
+                                          const dayDate = formatDateKey(
+                                            new Date(
+                                              currentYear,
+                                              currentMonth,
+                                              day
+                                            )
+                                          );
+                                          const isCompleted =
+                                            completionDates.includes(dayDate);
+
+                                          return (
+                                            <Box
+                                              key={day}
+                                              sx={{
+                                                width: 28,
+                                                height: 28,
+                                                backgroundColor: isCompleted
+                                                  ? "success.light"
+                                                  : "grey.300",
+                                                display: "flex",
+                                                alignItems: "center",
+                                                justifyContent: "center",
+                                                borderRadius: 1,
+                                                fontSize: "0.75rem",
+                                                color: isFutureDay
+                                                  ? "grey.500"
+                                                  : "text.primary",
+                                              }}
+                                            >
+                                              {day}
+                                            </Box>
+                                          );
+                                        })}
+                                      </Box>
+                                    </ListItem>
+                                  );
+                                })}
+                              </List>
+                            </Box>
+                          ) : (
+                            <Typography variant="body1" color="text.secondary">
+                              No tasks found in "Routines" project with "track"
+                              label.
+                            </Typography>
+                          )}
+                        </Box>
                       )}
                     </Box>
                   </CardContent>
@@ -843,6 +1539,80 @@ function HomePage() {
           </Card>
         </Box>
       </Container>
+
+      {/* Emoji Picker Popover */}
+      <Popover
+        open={Boolean(emojiPickerAnchor)}
+        anchorEl={emojiPickerAnchor}
+        onClose={() => {
+          setEmojiPickerAnchor(null);
+          setSelectedHabitId(null);
+        }}
+        anchorOrigin={{
+          vertical: "top",
+          horizontal: "center",
+        }}
+        transformOrigin={{
+          vertical: "bottom",
+          horizontal: "center",
+        }}
+      >
+        <Paper
+          sx={{
+            p: 1.5,
+            display: "flex",
+            gap: 1,
+            alignItems: "center",
+          }}
+        >
+          <IconButton
+            onClick={() => handleEmojiSelect("👏")}
+            sx={{
+              fontSize: "1.5rem",
+              "&:hover": {
+                backgroundColor: "rgba(102, 126, 234, 0.1)",
+                transform: "scale(1.1)",
+              },
+              transition: "all 0.2s ease",
+            }}
+          >
+            👏
+          </IconButton>
+          <IconButton
+            onClick={() => handleEmojiSelect("👀")}
+            sx={{
+              fontSize: "1.5rem",
+              "&:hover": {
+                backgroundColor: "rgba(102, 126, 234, 0.1)",
+                transform: "scale(1.1)",
+              },
+              transition: "all 0.2s ease",
+            }}
+          >
+            👀
+          </IconButton>
+          {selectedHabitId &&
+            (() => {
+              const todayKey = formatDateKey(new Date());
+              const hasReaction = habitReactions[selectedHabitId]?.[todayKey];
+              return hasReaction ? (
+                <IconButton
+                  onClick={handleRemoveReaction}
+                  sx={{
+                    fontSize: "1rem",
+                    color: "text.secondary",
+                    ml: 1,
+                    "&:hover": {
+                      backgroundColor: "rgba(0, 0, 0, 0.05)",
+                    },
+                  }}
+                >
+                  Remove
+                </IconButton>
+              ) : null;
+            })()}
+        </Paper>
+      </Popover>
     </Box>
   );
 }

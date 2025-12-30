@@ -7,6 +7,7 @@ import HabitTracker from "./pages/HabitTracker";
 import SignInSignUp from "./pages/SignInSignUp";
 import AuthCallback from "./pages/AuthCallback";
 import ResetPassword from "./pages/ResetPassword";
+import TodoistCallback from "./pages/TodoistCallback";
 import theme from "./theme/theme";
 import "./styles/shared.css";
 import "./App.css";
@@ -25,6 +26,7 @@ function App() {
             <Route path="/signin" element={<SignInSignUp />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/todoist/callback" element={<TodoistCallback />} />
           </Routes>
         </Router>
       </AuthProvider>

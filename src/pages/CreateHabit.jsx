@@ -55,9 +55,12 @@ function CreateHabit() {
 
       // Get user ID if authenticated
       const userId = user ? user.id : null;
+      const creatorName = user
+        ? user.user_metadata?.full_name || user.email || null
+        : null;
 
       // Create habit in database
-      const newHabit = await createHabit(habitData, userId);
+      const newHabit = await createHabit(habitData, userId, creatorName);
 
       console.log("✅ Habit created successfully:", newHabit);
 
