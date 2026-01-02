@@ -49,3 +49,4 @@ BEGIN
     RAISE NOTICE '  - created_at: TIMESTAMP WITH TIME ZONE';
     RAISE NOTICE 'Unique constraint ensures one completion record per user, task, and date.';
 END $$;
+

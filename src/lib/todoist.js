@@ -392,3 +392,4 @@ export const syncTodoistCompletions = async () => {
     throw err;
   }
 };
+

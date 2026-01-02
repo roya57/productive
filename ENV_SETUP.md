@@ -67,3 +67,4 @@
 - Never commit `.env.local` or any file with actual secrets to your repository
 - The `.env.local.example` file is safe to commit (it contains no real values)
 
+

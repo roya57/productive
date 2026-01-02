@@ -66,3 +66,4 @@ After adding the variables and redeploying:
 - It should only exist in Vercel environment variables
 - It gives full database access, bypassing RLS policies
 - Use it only in serverless functions, never in frontend code
+

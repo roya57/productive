@@ -36,8 +36,7 @@ import {
   getAllHabitReactions,
 } from "../lib/supabase";
 import {
-  getTodoistProjects,
-  getTodoistTasksByProject,
+  getAllTodoistTasks,
   getTodoistLabels,
   syncTodoistCompletions,
 } from "../lib/todoist";
@@ -93,72 +92,54 @@ function HomePage() {
         if (isConnected) {
           try {
             setTodoistLoading(true);
-            // Get all projects and labels
-            const [projects, labels] = await Promise.all([
-              getTodoistProjects(),
+            // Get all labels and all tasks
+            const [labels, allTasks] = await Promise.all([
               getTodoistLabels(),
+              getAllTodoistTasks(),
             ]);
-
-            // Find the "Routines" project
-            const routinesProject = projects.find(
-              (project) => project.name === "Routines"
-            );
 
             // Find the "track" label
             const trackLabel = labels.find((label) => label.name === "track");
 
-            if (routinesProject) {
-              // Get tasks from the Routines project
-              const tasks = await getTodoistTasksByProject(routinesProject.id);
-
-              // Filter tasks that have the "track" label
-              const filteredTasks = tasks.filter((task) => {
-                // Tasks typically have label_ids array containing label IDs
-                if (task.label_ids && Array.isArray(task.label_ids)) {
-                  // If we found the track label, check if this task has its ID
-                  if (trackLabel) {
-                    return task.label_ids.includes(trackLabel.id);
-                  }
+            // Filter tasks that have the "track" label (from any project)
+            const filteredTasks = allTasks.filter((task) => {
+              // Tasks typically have label_ids array containing label IDs
+              if (task.label_ids && Array.isArray(task.label_ids)) {
+                // If we found the track label, check if this task has its ID
+                if (trackLabel) {
+                  return task.label_ids.includes(trackLabel.id);
                 }
-                // Fallback: check if task has labels property with names
-                if (task.labels && Array.isArray(task.labels)) {
-                  return task.labels.includes("track");
-                }
-                return false;
-              });
+              }
+              // Fallback: check if task has labels property with names
+              if (task.labels && Array.isArray(task.labels)) {
+                return task.labels.includes("track");
+              }
+              return false;
+            });
 
-              setTodoistTasks(filteredTasks);
+            setTodoistTasks(filteredTasks);
 
-              // Fetch completion data from database (synced by backend)
-              if (filteredTasks.length > 0) {
+            // Fetch completion data from database (synced by backend)
+            if (filteredTasks.length > 0) {
+              try {
+                const taskIds = filteredTasks.map((task) => String(task.id));
+                // First try to sync (trigger backend to fetch from Todoist)
                 try {
-                  const taskIds = filteredTasks.map((task) => String(task.id));
-                  // First try to sync (trigger backend to fetch from Todoist)
-                  try {
-                    await syncTodoistCompletions();
-                  } catch (syncErr) {
-                    // If sync fails, still try to load existing data from database
-                    console.warn(
-                      "Sync failed, loading existing data:",
-                      syncErr
-                    );
-                  }
-                  // Then fetch from database
-                  const completions = await getTodoistCompletionsFromDB(
-                    taskIds
-                  );
-                  setTodoistCompletions(completions);
-                } catch (err) {
-                  console.error("Error loading Todoist completions:", err);
-                  // Don't set error state for completion loading failures
-                  // Just continue with empty completions
-                  setTodoistCompletions({});
+                  await syncTodoistCompletions();
+                } catch (syncErr) {
+                  // If sync fails, still try to load existing data from database
+                  console.warn("Sync failed, loading existing data:", syncErr);
                 }
-              } else {
+                // Then fetch from database
+                const completions = await getTodoistCompletionsFromDB(taskIds);
+                setTodoistCompletions(completions);
+              } catch (err) {
+                console.error("Error loading Todoist completions:", err);
+                // Don't set error state for completion loading failures
+                // Just continue with empty completions
                 setTodoistCompletions({});
               }
             } else {
-              setTodoistTasks([]);
               setTodoistCompletions({});
             }
           } catch (err) {
